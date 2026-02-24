@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">HLOCK</string>
+
+    <string name="blocker_description">Used to block distracting content.</string>
+</resources>
