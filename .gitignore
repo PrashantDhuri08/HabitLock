@@ -13,3 +13,34 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+
+# Gradle build output
+/build/
+.gradle/
+**/build/
+
+# IntelliJ IDEA / Android Studio
+.idea/
+
+
+# Kotlin compiler errors
+.kotlin/
+
+# Logs and crash reports
+*.log
+hs_err_pid*.log
+replay_pid*.log
+
+# OS-specific files
+
+Thumbs.db
+
+# Gradle wrapper files (optional, if you regenerate them)
+gradlew
+gradlew.bat
+
+# Cache and temporary files
+*.tmp
+*.swp
+*.swo
