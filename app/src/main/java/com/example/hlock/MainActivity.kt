@@ -5,6 +5,7 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.view.LayoutInflater
@@ -17,6 +18,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.cardview.widget.CardView
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.switchmaterial.SwitchMaterial
 import java.util.*
 
 class MainActivity : AppCompatActivity() {
@@ -29,20 +31,25 @@ class MainActivity : AppCompatActivity() {
         
         sharedPrefs = getSharedPreferences("AppLimits", Context.MODE_PRIVATE)
         
-        // Load theme before setting content view
         val isDarkMode = sharedPrefs.getBoolean("dark_mode", true)
-        if (isDarkMode) {
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
-        } else {
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
-        }
+        AppCompatDelegate.setDefaultNightMode(if (isDarkMode) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO)
         
         setContentView(R.layout.activity_main)
 
+        setupUI()
+        setupSwitches()
+
+        if (!hasUsagePermission()) {
+            startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+        }
+    }
+
+    private fun setupUI() {
         val rvUsage = findViewById<RecyclerView>(R.id.rvUsage)
         val cvScrollAnalytics = findViewById<CardView>(R.id.cvScrollAnalytics)
         val btnToggleTheme = findViewById<MaterialButton>(R.id.btnToggleTheme)
         val btnAccessibility = findViewById<MaterialButton>(R.id.btnAccessibility)
+        val btnCustomKeywords = findViewById<MaterialButton>(R.id.btnCustomKeywords)
 
         usageAdapter = UsageAdapter(emptyList()) { app -> 
             showLimitDialog(app)
@@ -63,9 +70,45 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
-        if (!hasUsagePermission()) {
-            startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+        btnCustomKeywords.setOnClickListener {
+            showKeywordsDialog()
         }
+    }
+
+    private fun showKeywordsDialog() {
+        val et = EditText(this)
+        val current = sharedPrefs.getString("explicit_words", "nsfw,porn,sexy,adult,gamble,casino")
+        et.setText(current)
+        et.setHint("Comma separated words")
+
+        AlertDialog.Builder(this)
+            .setTitle("Explicit Keywords")
+            .setView(et)
+            .setPositiveButton("Save") { _, _ ->
+                sharedPrefs.edit().putString("explicit_words", et.text.toString()).apply()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun setupSwitches() {
+        val swBlockReels = findViewById<SwitchMaterial>(R.id.swBlockReels)
+        val swBlockComments = findViewById<SwitchMaterial>(R.id.swBlockComments)
+        val swBlockExplicit = findViewById<SwitchMaterial>(R.id.swBlockExplicit)
+        val swFocusMode = findViewById<SwitchMaterial>(R.id.swFocusMode)
+        val swAntiUninstall = findViewById<SwitchMaterial>(R.id.swAntiUninstall)
+
+        swBlockReels.isChecked = sharedPrefs.getBoolean("block_reels", false)
+        swBlockComments.isChecked = sharedPrefs.getBoolean("block_comments", false)
+        swBlockExplicit.isChecked = sharedPrefs.getBoolean("block_explicit", false)
+        swFocusMode.isChecked = sharedPrefs.getBoolean("focus_mode", false)
+        swAntiUninstall.isChecked = sharedPrefs.getBoolean("anti_uninstall", false)
+
+        swBlockReels.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("block_reels", isChecked).apply() }
+        swBlockComments.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("block_comments", isChecked).apply() }
+        swBlockExplicit.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("block_explicit", isChecked).apply() }
+        swFocusMode.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("focus_mode", isChecked).apply() }
+        swAntiUninstall.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("anti_uninstall", isChecked).apply() }
     }
 
     private fun showLimitDialog(app: AppUsageInfo) {
@@ -78,8 +121,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         AlertDialog.Builder(this)
-            .setTitle("Set Limit for ${app.appName}")
-            .setMessage("Enter daily limit in minutes (0 for no limit)")
+            .setTitle("Limit: ${app.appName}")
             .setView(dialogView)
             .setPositiveButton("Set") { _, _ ->
                 val limit = etLimit.text.toString().toIntOrNull() ?: 0
@@ -107,7 +149,6 @@ class MainActivity : AppCompatActivity() {
         val usageData = getTodayUsageData()
         usageAdapter.updateData(usageData)
 
-        // Calculate total usage
         var totalMinutes = 0L
         usageData.forEach {
             totalMinutes += parseTimeToMinutes(it.usageTime)
@@ -117,15 +158,13 @@ class MainActivity : AppCompatActivity() {
         val minutes = totalMinutes % 60
         findViewById<TextView>(R.id.tvTotalUsage).text = "${hours}h ${minutes}m"
         
-        // Update circular progress (e.g., target 8 hours = 480 mins)
-        val progress = ((totalMinutes.toFloat() / 480f) * 360).toInt()
+        val progress = ((totalMinutes.toFloat() / 480f) * 480).toInt()
         findViewById<ProgressBar>(R.id.pbDailyUsage).progress = progress
 
-        // Update total scrolls preview
         val reels = sharedPrefs.getInt("reels_scroll_count", 0)
         val shorts = sharedPrefs.getInt("shorts_scroll_count", 0)
         val tiktok = sharedPrefs.getInt("tiktok_scroll_count", 0)
-        findViewById<TextView>(R.id.tvTotalScrolls).text = "Total Scrolls: ${reels + shorts + tiktok}"
+        findViewById<TextView>(R.id.tvTotalScrolls).text = "${reels + shorts + tiktok} Scrolls Detected"
     }
 
     private fun parseTimeToMinutes(timeStr: String): Int {
@@ -152,7 +191,7 @@ class MainActivity : AppCompatActivity() {
 
         return stats.filter { it.totalTimeInForeground > 0 }
             .sortedByDescending { it.totalTimeInForeground }
-            .take(10)
+            .take(15)
             .map { stat ->
                 val appName = try {
                     pm.getApplicationLabel(pm.getApplicationInfo(stat.packageName, 0)).toString()
@@ -168,10 +207,10 @@ class MainActivity : AppCompatActivity() {
                 val timeString = if (timeInMins >= 60) "${timeInMins / 60}h ${timeInMins % 60}m" else "${timeInMins}m"
                 
                 val limit = sharedPrefs.getInt(stat.packageName, 0)
-                val scrollCount = when (stat.packageName) {
-                    "com.instagram.android" -> sharedPrefs.getInt("reels_scroll_count", 0)
-                    "com.google.android.youtube" -> sharedPrefs.getInt("shorts_scroll_count", 0)
-                    "com.zhiliaoapp.musically" -> sharedPrefs.getInt("tiktok_scroll_count", 0)
+                val scrollCount = when {
+                    stat.packageName == "com.instagram.android" -> sharedPrefs.getInt("reels_scroll_count", 0)
+                    stat.packageName == "com.google.android.youtube" -> sharedPrefs.getInt("shorts_scroll_count", 0)
+                    stat.packageName.contains("tiktok") -> sharedPrefs.getInt("tiktok_scroll_count", 0)
                     else -> 0
                 }
 

@@ -3,164 +3,259 @@ package com.example.hlock
 import android.accessibilityservice.AccessibilityService
 import android.app.usage.UsageStatsManager
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.View
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.TextView
 import android.widget.Toast
 import java.util.*
 
 class MyBlockerService : AccessibilityService() {
 
-    private val INSTAGRAM_PACKAGE = "com.instagram.android"
-    private val YOUTUBE_PACKAGE = "com.google.android.youtube"
-    private val TIKTOK_PACKAGE = "com.zhiliaoapp.musically"
+    companion object {
+        const val INSTAGRAM_PACKAGE = "com.instagram.android"
+        const val YOUTUBE_PACKAGE = "com.google.android.youtube"
+        
+        val TIKTOK_PACKAGES = hashSetOf(
+            "com.zhiliaoapp.musically",
+            "com.ss.android.ugc.trill",
+            "com.ss.android.ugc.aweme"
+        )
+
+        val REELS_VIEW_IDS = listOf(
+            "com.instagram.android:id/root_clips_layout",
+            "com.google.android.youtube:id/reel_recycler"
+        )
+    }
     
     private lateinit var sharedPrefs: SharedPreferences
     private var lastScrollTime = 0L
-    private val SCROLL_DEBOUNCE_MS = 500L // Minimum time between scroll counts
+    private val SCROLL_DEBOUNCE_MS = 1000L 
+
+    private var windowManager: WindowManager? = null
+    private var floatingView: View? = null
+    private var currentPackage: String? = null
+    private val handler = Handler(Looper.getMainLooper())
+    
+    private val updateOverlayTask = object : Runnable {
+        override fun run() {
+            updateFloatingOverlay()
+            handler.postDelayed(this, 1000)
+        }
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         sharedPrefs = getSharedPreferences("AppLimits", Context.MODE_PRIVATE)
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val packageName = event.packageName?.toString() ?: return
-
-        // 1. Generic App Blocking based on User-Set Limit
-        val limitMinutes = sharedPrefs.getInt(packageName, 0)
-        if (limitMinutes > 0 && isUsageLimitExceeded(packageName, limitMinutes)) {
-            if (packageName == INSTAGRAM_PACKAGE) {
-                handleInstagramReels(event)
-            } else {
-                blockApp(packageName)
-            }
+        
+        // 1. Safety: NEVER block our own app
+        if (packageName == this.packageName) {
+            removeFloatingOverlay() // Don't show overlay on our app
             return
         }
 
-        // 2. Track Scrolls for Reels/Shorts/TikTok
+        val nodeInfo = rootInActiveWindow ?: return
+
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            currentPackage = packageName
+            handleOverlayVisibility(packageName, nodeInfo)
+            
+            // 2. Strict Reels/Shorts Blocking
+            if (sharedPrefs.getBoolean("block_reels", false)) {
+                if (isViewingReels(packageName, nodeInfo)) {
+                    blockAction("Reels are restricted by HLock")
+                    nodeInfo.recycle()
+                    return
+                }
+            }
+
+            // 3. Focus Mode
+            if (sharedPrefs.getBoolean("focus_mode", false)) {
+                val focusApps = sharedPrefs.getStringSet("focus_apps", emptySet()) ?: emptySet()
+                if (focusApps.contains(packageName) || TIKTOK_PACKAGES.contains(packageName) || packageName == INSTAGRAM_PACKAGE) {
+                    showWarningScreen(packageName, "Focus Mode is ON")
+                    nodeInfo.recycle()
+                    return
+                }
+            }
+        }
+
+        // 4. Comments Blocking
+        if (sharedPrefs.getBoolean("block_comments", false)) {
+            if (isViewingComments(packageName, nodeInfo)) {
+                blockAction("Comments hidden")
+                nodeInfo.recycle()
+                return
+            }
+        }
+
+        // 5. Explicit Content
+        if (sharedPrefs.getBoolean("block_explicit", false)) {
+            if (containsExplicitContent(nodeInfo)) {
+                blockAction("Filtered content")
+                nodeInfo.recycle()
+                return
+            }
+        }
+
+        // 6. Security (Anti-Uninstall)
+        if (packageName == "com.android.settings" && sharedPrefs.getBoolean("anti_uninstall", false)) {
+            if (isTryingToUninstall(nodeInfo)) {
+                blockAction("Uninstall protection active")
+                nodeInfo.recycle()
+                return
+            }
+        }
+
+        // 7. Scroll Tracking
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
             val currentTime = System.currentTimeMillis()
             if (currentTime - lastScrollTime > SCROLL_DEBOUNCE_MS) {
-                when (packageName) {
-                    INSTAGRAM_PACKAGE -> trackScroll(packageName, "reels_scroll_count")
-                    YOUTUBE_PACKAGE -> trackScroll(packageName, "shorts_scroll_count")
-                    TIKTOK_PACKAGE -> trackScroll(packageName, "tiktok_scroll_count")
+                if (isViewingReels(packageName, nodeInfo)) {
+                    val key = when {
+                        packageName == INSTAGRAM_PACKAGE -> "reels_scroll_count"
+                        packageName == YOUTUBE_PACKAGE -> "shorts_scroll_count"
+                        TIKTOK_PACKAGES.contains(packageName) -> "tiktok_scroll_count"
+                        else -> null
+                    }
+                    key?.let { trackScroll(it) }
                 }
                 lastScrollTime = currentTime
             }
         }
+
+        nodeInfo.recycle()
     }
 
-    private fun trackScroll(packageName: String, prefKey: String) {
-        val nodeInfo = rootInActiveWindow ?: return
+    private fun isViewingReels(packageName: String, nodeInfo: AccessibilityNodeInfo): Boolean {
+        if (TIKTOK_PACKAGES.contains(packageName)) return true
         
-        val isReelsOrShorts = when (packageName) {
-            INSTAGRAM_PACKAGE -> isViewingInstagramReels(nodeInfo)
-            YOUTUBE_PACKAGE -> isViewingYouTubeShorts(nodeInfo)
-            TIKTOK_PACKAGE -> true
-            else -> false
+        REELS_VIEW_IDS.forEach { viewId ->
+            val nodes = nodeInfo.findAccessibilityNodeInfosByViewId(viewId)
+            if (nodes.isNotEmpty()) {
+                val reelNode = nodes[0]
+                val rect = Rect()
+                reelNode.getBoundsInScreen(rect)
+                if (rect.width() > 0 && rect.height() > 0) return true
+            }
+        }
+        
+        // Fallback for YouTube Shorts if ViewID fails
+        if (packageName == YOUTUBE_PACKAGE) {
+            val shortsNodes = nodeInfo.findAccessibilityNodeInfosByText("Shorts")
+            if (shortsNodes.any { it.isVisibleToUser }) return true
         }
 
-        if (isReelsOrShorts) {
-            val currentCount = sharedPrefs.getInt(prefKey, 0)
-            sharedPrefs.edit().putInt(prefKey, currentCount + 1).apply()
-        }
-        nodeInfo.recycle()
+        return false
     }
 
-    private fun isViewingInstagramReels(nodeInfo: AccessibilityNodeInfo): Boolean {
-        // More robust check: look for specific View IDs or class names if possible, 
-        // but for now, we'll keep the text check and ensure it's visible.
-        val reelsNodes = nodeInfo.findAccessibilityNodeInfosByText("Reels")
-        val screenHeight = resources.displayMetrics.heightPixels
-        var found = false
-        for (node in reelsNodes) {
-            val rect = Rect()
-            node.getBoundsInScreen(rect)
-            val isAtTop = rect.top < (screenHeight * 0.25)
-            if (isAtTop && node.isVisibleToUser) {
-                found = true
-            }
-            node.recycle()
+    private fun handleOverlayVisibility(packageName: String, nodeInfo: AccessibilityNodeInfo) {
+        val isDistractingApp = packageName == INSTAGRAM_PACKAGE || packageName == YOUTUBE_PACKAGE || TIKTOK_PACKAGES.contains(packageName)
+        val showScrollOverlay = isDistractingApp && isViewingReels(packageName, nodeInfo)
+
+        if (showScrollOverlay) {
+            showFloatingOverlay()
+        } else {
+            removeFloatingOverlay()
         }
-        return found
     }
 
-    private fun isViewingYouTubeShorts(nodeInfo: AccessibilityNodeInfo): Boolean {
-        val shortsNodes = nodeInfo.findAccessibilityNodeInfosByText("Shorts")
-        var found = false
-        for (node in shortsNodes) {
-            if (node.isVisibleToUser) {
-                found = true
-            }
-            node.recycle()
+    private fun showFloatingOverlay() {
+        if (floatingView == null) {
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT
+            )
+            params.gravity = Gravity.TOP or Gravity.END
+            params.x = 40
+            params.y = 150
+
+            floatingView = LayoutInflater.from(this).inflate(R.layout.layout_floating_timer, null)
+            try {
+                windowManager?.addView(floatingView, params)
+                handler.post(updateOverlayTask)
+            } catch (e: Exception) {}
         }
-        return found
     }
 
-    private fun handleInstagramReels(event: AccessibilityEvent) {
-        val nodeInfo = rootInActiveWindow ?: return
-        val reelsNodes = nodeInfo.findAccessibilityNodeInfosByText("Reels")
-        val screenHeight = resources.displayMetrics.heightPixels
-
-        for (node in reelsNodes) {
-            val rect = Rect()
-            node.getBoundsInScreen(rect)
-
-            val isAtTop = rect.top < (screenHeight * 0.25)
-            val isAtBottom = rect.bottom > (screenHeight * 0.8)
-
-            if ((isAtTop && node.isVisibleToUser) || (isAtBottom && isSelectedInHierarchy(node))) {
-                blockApp("Instagram Reels")
-                node.recycle()
-                break
-            }
-            node.recycle()
+    private fun removeFloatingOverlay() {
+        floatingView?.let {
+            try { windowManager?.removeView(it) } catch (e: Exception) {}
+            floatingView = null
+            handler.removeCallbacks(updateOverlayTask)
         }
-        nodeInfo.recycle()
     }
 
-    private fun isSelectedInHierarchy(node: AccessibilityNodeInfo?): Boolean {
-        var current = node
-        while (current != null) {
-            if (current.isSelected) {
-                if (current != node) current.recycle()
-                return true
-            }
-            val parent = current.parent
-            if (current != node) current.recycle()
-            current = parent
+    private fun updateFloatingOverlay() {
+        val reels = sharedPrefs.getInt("reels_scroll_count", 0)
+        val shorts = sharedPrefs.getInt("shorts_scroll_count", 0)
+        val tiktok = sharedPrefs.getInt("tiktok_scroll_count", 0)
+        val total = reels + shorts + tiktok
+        
+        floatingView?.findViewById<TextView>(R.id.tvFloatingTimer)?.text = "Scrolls Today: $total"
+    }
+
+    private fun isViewingComments(packageName: String, nodeInfo: AccessibilityNodeInfo): Boolean {
+        val commentIds = listOf("com.instagram.android:id/layout_comment_thread_root", "com.google.android.youtube:id/comments_entry_point_container")
+        commentIds.forEach { id ->
+            if (nodeInfo.findAccessibilityNodeInfosByViewId(id).isNotEmpty()) return true
+        }
+        
+        val keywords = listOf("Comments", "Add a comment", "View all comments", "Reply")
+        return keywords.any { k -> nodeInfo.findAccessibilityNodeInfosByText(k).any { it.isVisibleToUser } }
+    }
+
+    private fun containsExplicitContent(nodeInfo: AccessibilityNodeInfo): Boolean {
+        val userWords = sharedPrefs.getString("explicit_words", "nsfw,porn,sexy,adult,gamble,casino") ?: ""
+        val keywords = userWords.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        
+        for (word in keywords) {
+            if (nodeInfo.findAccessibilityNodeInfosByText(word).isNotEmpty()) return true
         }
         return false
     }
 
-    private fun blockApp(label: String) {
+    private fun isTryingToUninstall(nodeInfo: AccessibilityNodeInfo): Boolean {
+        val textList = listOf("HLOCK", "Uninstall", "Force stop", "Clear storage")
+        return textList.count { nodeInfo.findAccessibilityNodeInfosByText(it).isNotEmpty() } >= 2
+    }
+
+    private fun trackScroll(prefKey: String) {
+        val currentCount = sharedPrefs.getInt(prefKey, 0)
+        sharedPrefs.edit().putInt(prefKey, currentCount + 1).apply()
+    }
+
+    private fun blockAction(reason: String) {
         performGlobalAction(GLOBAL_ACTION_BACK)
-        Toast.makeText(this, "Limit reached for $label!", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, reason, Toast.LENGTH_SHORT).show()
     }
 
-    private fun isUsageLimitExceeded(packageName: String, limitMinutes: Int): Boolean {
-        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        val calendar = Calendar.getInstance()
-        calendar.set(Calendar.HOUR_OF_DAY, 0)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
-        
-        val startTime = calendar.timeInMillis
-        val endTime = System.currentTimeMillis()
-
-        val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, startTime, endTime)
-        val appStats = stats.find { it.packageName == packageName }
-        
-        return if (appStats != null) {
-            val minutesUsed = appStats.totalTimeInForeground / (1000 * 60)
-            minutesUsed >= limitMinutes
-        } else {
-            false
+    private fun showWarningScreen(packageName: String, message: String) {
+        val intent = Intent(this, WarningActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            putExtra("blocked_package", packageName)
+            putExtra("warning_message", message)
         }
+        startActivity(intent)
     }
 
-    override fun onInterrupt() {}
+    override fun onInterrupt() { removeFloatingOverlay() }
+    override fun onDestroy() { super.onDestroy(); removeFloatingOverlay() }
 }

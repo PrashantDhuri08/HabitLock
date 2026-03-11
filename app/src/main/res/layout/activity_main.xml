@@ -12,49 +12,37 @@
     <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingTop="16dp"
+        android:paddingTop="24dp"
         android:paddingBottom="32dp">
-
-        <!-- Logo -->
-        <ImageView
-            android:id="@+id/ivLogo"
-            android:layout_width="60dp"
-            android:layout_height="60dp"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="16dp"
-            android:src="@drawable/app_logo"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent" />
 
         <!-- Header -->
         <TextView
             android:id="@+id/tvTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:fontFamily="sans-serif-medium"
-            android:text="HabitLock"
-            android:textColor="@color/text_primary"
-            android:textSize="22sp"
-            app:layout_constraintBottom_toBottomOf="@+id/ivLogo"
-            app:layout_constraintStart_toEndOf="@id/ivLogo"
-            app:layout_constraintTop_toTopOf="@+id/ivLogo" />
+            android:layout_marginStart="24dp"
+            android:fontFamily="sans-serif-black"
+            android:text="HLOCK"
+            android:textColor="@color/accent_green"
+            android:textSize="28sp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
 
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="8dp"
+            android:layout_marginEnd="16dp"
             android:orientation="horizontal"
-            app:layout_constraintBottom_toBottomOf="@+id/ivLogo"
+            app:layout_constraintBottom_toBottomOf="@+id/tvTitle"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toTopOf="@+id/ivLogo">
+            app:layout_constraintTop_toTopOf="@+id/tvTitle">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnAccessibility"
                 style="@style/Widget.MaterialComponents.Button.TextButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Accessibility"
+                android:text="Setup"
                 android:textColor="@color/accent_green" />
 
             <com.google.android.material.button.MaterialButton
@@ -74,15 +62,15 @@
             android:layout_marginTop="32dp"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@id/ivLogo">
+            app:layout_constraintTop_toBottomOf="@id/tvTitle">
 
             <ProgressBar
                 android:id="@+id/pbDailyUsage"
                 style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:max="360"
-                android:progress="150"
+                android:max="480"
+                android:progress="0"
                 android:progressDrawable="@drawable/circular_progress_bar" />
 
             <LinearLayout
@@ -110,36 +98,118 @@
             </LinearLayout>
         </FrameLayout>
 
-        <!-- Short-form Scroll Count Card -->
+        <!-- Features -->
         <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cvScrollAnalytics"
+            android:id="@+id/cvFeatures"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginHorizontal="16dp"
             android:layout_marginTop="32dp"
             app:cardBackgroundColor="@color/card_dark"
-            app:cardCornerRadius="16dp"
+            app:cardCornerRadius="20dp"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@+id/flUsageCircle">
 
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="20dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Focus Controls"
+                    android:textColor="@color/accent_green"
+                    android:fontFamily="sans-serif-bold"
+                    android:textSize="18sp"
+                    android:layout_marginBottom="12dp"/>
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swBlockReels"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Strict Reels/Shorts Block"
+                    android:textColor="@color/text_primary" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swBlockComments"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Hide Comments"
+                    android:textColor="@color/text_primary" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swBlockExplicit"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Explicit Content Filter"
+                    android:textColor="@color/text_primary" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCustomKeywords"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Custom Keywords"
+                    android:textColor="@color/accent_green"
+                    android:textSize="12sp"
+                    android:textAllCaps="false"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#1AFFFFFF"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="16dp"/>
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swFocusMode"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Extreme Focus Mode"
+                    android:textColor="@color/text_primary" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swAntiUninstall"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Security (Anti-Uninstall)"
+                    android:textColor="@color/text_primary" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Stats Preview -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cvScrollAnalytics"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="16dp"
+            android:layout_marginTop="16dp"
+            app:cardBackgroundColor="@color/card_dark"
+            app:cardCornerRadius="20dp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@+id/cvFeatures">
+
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:padding="16dp">
+                android:padding="20dp">
 
                 <TextView
                     android:id="@+id/tvScrollTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:fontFamily="sans-serif-medium"
-                    android:text="Short-form Scroll Count"
+                    android:text="Distraction Level"
                     android:textColor="@color/text_primary"
                     android:textSize="18sp"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintTop_toTopOf="parent" />
 
-                <!-- Placeholder for actual data -->
                 <TextView
                     android:id="@+id/tvTotalScrolls"
                     android:layout_width="wrap_content"
@@ -149,23 +219,23 @@
                     android:textSize="14sp"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintTop_toBottomOf="@+id/tvScrollTitle"
-                    tools:text="Click to see details" />
+                    tools:text="154 Scrolls Detected" />
 
             </androidx.constraintlayout.widget.ConstraintLayout>
 
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- Top Used Apps -->
+        <!-- List -->
         <TextView
             android:id="@+id/tvTopUsedTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
+            android:layout_marginStart="24dp"
             android:layout_marginTop="24dp"
-            android:fontFamily="sans-serif-medium"
-            android:text="Top Used Apps (Tap to set limit)"
+            android:fontFamily="sans-serif-bold"
+            android:text="App Limits"
             android:textColor="@color/text_primary"
-            android:textSize="18sp"
+            android:textSize="20sp"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@+id/cvScrollAnalytics" />
 
@@ -173,7 +243,7 @@
             android:id="@+id/rvUsage"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="12dp"
             android:nestedScrollingEnabled="false"
             app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
             app:layout_constraintEnd_toEndOf="parent"
