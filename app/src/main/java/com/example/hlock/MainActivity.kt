@@ -9,9 +9,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.view.LayoutInflater
-import android.widget.EditText
-import android.widget.ProgressBar
-import android.widget.TextView
+import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
@@ -113,22 +111,30 @@ class MainActivity : AppCompatActivity() {
 
     private fun showLimitDialog(app: AppUsageInfo) {
         val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_set_limit, null)
-        val etLimit = dialogView.findViewById<EditText>(R.id.etLimit)
+        val npHours = dialogView.findViewById<NumberPicker>(R.id.npHours)
+        val npMinutes = dialogView.findViewById<NumberPicker>(R.id.npMinutes)
+
+        npHours.minValue = 0
+        npHours.maxValue = 23
+        npMinutes.minValue = 0
+        npMinutes.maxValue = 59
         
-        val currentLimit = sharedPrefs.getInt(app.packageName, 0)
-        if (currentLimit > 0) {
-            etLimit.setText(currentLimit.toString())
-        }
+        val currentLimitTotal = sharedPrefs.getInt(app.packageName, 0)
+        npHours.value = currentLimitTotal / 60
+        npMinutes.value = currentLimitTotal % 60
 
         AlertDialog.Builder(this)
-            .setTitle("Limit: ${app.appName}")
+            .setTitle(app.appName)
             .setView(dialogView)
-            .setPositiveButton("Set") { _, _ ->
-                val limit = etLimit.text.toString().toIntOrNull() ?: 0
-                sharedPrefs.edit().putInt(app.packageName, limit).apply()
+            .setPositiveButton("Set Limit") { _, _ ->
+                val totalMinutes = (npHours.value * 60) + npMinutes.value
+                sharedPrefs.edit().putInt(app.packageName, totalMinutes).apply()
                 updateDashboard()
             }
-            .setNegativeButton("Cancel", null)
+            .setNegativeButton("Remove Limit") { _, _ ->
+                sharedPrefs.edit().remove(app.packageName).apply()
+                updateDashboard()
+            }
             .show()
     }
 
@@ -164,7 +170,7 @@ class MainActivity : AppCompatActivity() {
         val reels = sharedPrefs.getInt("reels_scroll_count", 0)
         val shorts = sharedPrefs.getInt("shorts_scroll_count", 0)
         val tiktok = sharedPrefs.getInt("tiktok_scroll_count", 0)
-        findViewById<TextView>(R.id.tvTotalScrolls).text = "${reels + shorts + tiktok} Scrolls Detected"
+        findViewById<TextView>(R.id.tvTotalScrolls).text = "${reels + shorts + tiktok}"
     }
 
     private fun parseTimeToMinutes(timeStr: String): Int {
@@ -184,37 +190,62 @@ class MainActivity : AppCompatActivity() {
         calendar.set(Calendar.HOUR_OF_DAY, 0)
         calendar.set(Calendar.MINUTE, 0)
         calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
         val startTime = calendar.timeInMillis
         val endTime = System.currentTimeMillis()
 
-        val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, startTime, endTime)
+        val events = usm.queryEvents(startTime, endTime)
+        val statsMap = mutableMapOf<String, Long>()
+        val startTimes = mutableMapOf<String, Long>()
 
-        return stats.filter { it.totalTimeInForeground > 0 }
-            .sortedByDescending { it.totalTimeInForeground }
+        val event = android.app.usage.UsageEvents.Event()
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            when (event.eventType) {
+                android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED -> {
+                    startTimes[event.packageName] = event.timeStamp
+                }
+                android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED -> {
+                    val start = startTimes.remove(event.packageName)
+                    if (start != null) {
+                        val duration = event.timeStamp - start
+                        statsMap[event.packageName] = (statsMap[event.packageName] ?: 0L) + duration
+                    }
+                }
+            }
+        }
+
+        // Add currently foreground apps
+        startTimes.forEach { (pkg, start) ->
+            statsMap[pkg] = (statsMap[pkg] ?: 0L) + (endTime - start)
+        }
+
+        return statsMap.entries.filter { it.value > 0 }
+            .sortedByDescending { it.value }
             .take(15)
-            .map { stat ->
+            .map { (pkg, totalTime) ->
                 val appName = try {
-                    pm.getApplicationLabel(pm.getApplicationInfo(stat.packageName, 0)).toString()
+                    pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
                 } catch (e: Exception) {
-                    stat.packageName.substringAfterLast(".").replaceFirstChar { it.uppercase() }
+                    pkg.substringAfterLast(".").replaceFirstChar { it.uppercase() }
                 }
 
                 val icon = try {
-                    pm.getApplicationIcon(stat.packageName)
+                    pm.getApplicationIcon(pkg)
                 } catch (e: Exception) { null }
 
-                val timeInMins = stat.totalTimeInForeground / (1000 * 60)
+                val timeInMins = totalTime / (1000 * 60)
                 val timeString = if (timeInMins >= 60) "${timeInMins / 60}h ${timeInMins % 60}m" else "${timeInMins}m"
                 
-                val limit = sharedPrefs.getInt(stat.packageName, 0)
+                val limit = sharedPrefs.getInt(pkg, 0)
                 val scrollCount = when {
-                    stat.packageName == "com.instagram.android" -> sharedPrefs.getInt("reels_scroll_count", 0)
-                    stat.packageName == "com.google.android.youtube" -> sharedPrefs.getInt("shorts_scroll_count", 0)
-                    stat.packageName.contains("tiktok") -> sharedPrefs.getInt("tiktok_scroll_count", 0)
+                    pkg == "com.instagram.android" -> sharedPrefs.getInt("reels_scroll_count", 0)
+                    pkg == "com.google.android.youtube" -> sharedPrefs.getInt("shorts_scroll_count", 0)
+                    pkg.contains("tiktok") -> sharedPrefs.getInt("tiktok_scroll_count", 0)
                     else -> 0
                 }
 
-                AppUsageInfo(stat.packageName, appName, timeString, icon, limit, scrollCount)
+                AppUsageInfo(pkg, appName, timeString, icon, limit, scrollCount)
             }
     }
 }

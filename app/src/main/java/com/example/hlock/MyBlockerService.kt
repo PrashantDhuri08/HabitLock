@@ -44,6 +44,8 @@ class MyBlockerService : AccessibilityService() {
     private var windowManager: WindowManager? = null
     private var floatingView: View? = null
     private var currentPackage: String? = null
+    private var blurOverlayView: View? = null
+    private val explicitWarningCooldowns = mutableMapOf<String, Long>()
     private val handler = Handler(Looper.getMainLooper())
     
     private val updateOverlayTask = object : Runnable {
@@ -78,17 +80,21 @@ class MyBlockerService : AccessibilityService() {
             if (sharedPrefs.getBoolean("block_reels", false)) {
                 if (isViewingReels(packageName, nodeInfo)) {
                     blockAction("Reels are restricted by HLock")
-                    nodeInfo.recycle()
                     return
                 }
             }
 
-            // 3. Focus Mode
+            // 3. App Limit Check
+            if (isLimitReached(packageName)) {
+                showWarningScreen(packageName, "You've exceeded your daily limit for this app.")
+                return
+            }
+
+            // 4. Focus Mode
             if (sharedPrefs.getBoolean("focus_mode", false)) {
                 val focusApps = sharedPrefs.getStringSet("focus_apps", emptySet()) ?: emptySet()
                 if (focusApps.contains(packageName) || TIKTOK_PACKAGES.contains(packageName) || packageName == INSTAGRAM_PACKAGE) {
                     showWarningScreen(packageName, "Focus Mode is ON")
-                    nodeInfo.recycle()
                     return
                 }
             }
@@ -98,17 +104,19 @@ class MyBlockerService : AccessibilityService() {
         if (sharedPrefs.getBoolean("block_comments", false)) {
             if (isViewingComments(packageName, nodeInfo)) {
                 blockAction("Comments hidden")
-                nodeInfo.recycle()
                 return
             }
         }
 
         // 5. Explicit Content
         if (sharedPrefs.getBoolean("block_explicit", false)) {
-            if (containsExplicitContent(nodeInfo)) {
-                blockAction("Filtered content")
-                nodeInfo.recycle()
-                return
+            val cooldown = explicitWarningCooldowns[packageName] ?: 0L
+            if (System.currentTimeMillis() - cooldown > 30000) { // 30 second cooldown
+                if (containsExplicitContent(nodeInfo)) {
+                    explicitWarningCooldowns[packageName] = System.currentTimeMillis()
+                    showBlurOverlay("Explicit Content Notification")
+                    return
+                }
             }
         }
 
@@ -116,7 +124,6 @@ class MyBlockerService : AccessibilityService() {
         if (packageName == "com.android.settings" && sharedPrefs.getBoolean("anti_uninstall", false)) {
             if (isTryingToUninstall(nodeInfo)) {
                 blockAction("Uninstall protection active")
-                nodeInfo.recycle()
                 return
             }
         }
@@ -132,13 +139,11 @@ class MyBlockerService : AccessibilityService() {
                         TIKTOK_PACKAGES.contains(packageName) -> "tiktok_scroll_count"
                         else -> null
                     }
-                    key?.let { trackScroll(it) }
+                    key?.let { trackScroll(it); updateFloatingOverlay() }
                 }
                 lastScrollTime = currentTime
             }
         }
-
-        nodeInfo.recycle()
     }
 
     private fun isViewingReels(packageName: String, nodeInfo: AccessibilityNodeInfo): Boolean {
@@ -209,7 +214,7 @@ class MyBlockerService : AccessibilityService() {
         val tiktok = sharedPrefs.getInt("tiktok_scroll_count", 0)
         val total = reels + shorts + tiktok
         
-        floatingView?.findViewById<TextView>(R.id.tvFloatingTimer)?.text = "Scrolls Today: $total"
+        floatingView?.findViewById<TextView>(R.id.tvFloatingTimer)?.text = "$total"
     }
 
     private fun isViewingComments(packageName: String, nodeInfo: AccessibilityNodeInfo): Boolean {
@@ -247,6 +252,43 @@ class MyBlockerService : AccessibilityService() {
         Toast.makeText(this, reason, Toast.LENGTH_SHORT).show()
     }
 
+    private fun isLimitReached(packageName: String): Boolean {
+        val limitMinutes = sharedPrefs.getInt(packageName, 0)
+        if (limitMinutes <= 0) return false
+
+        val usm = getSystemService(USAGE_STATS_SERVICE) as UsageStatsManager
+        val calendar = Calendar.getInstance()
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        val startTime = calendar.timeInMillis
+        val endTime = System.currentTimeMillis()
+
+        val events = usm.queryEvents(startTime, endTime)
+        var totalTime = 0L
+        var lastStart = 0L
+
+        val event = android.app.usage.UsageEvents.Event()
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            if (event.packageName == packageName) {
+                when (event.eventType) {
+                    android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED -> lastStart = event.timeStamp
+                    android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED -> {
+                        if (lastStart > 0) {
+                            totalTime += event.timeStamp - lastStart
+                            lastStart = 0L
+                        }
+                    }
+                }
+            }
+        }
+        if (lastStart > 0L) totalTime += endTime - lastStart
+        
+        return (totalTime / (1000 * 60)) >= limitMinutes
+    }
+
     private fun showWarningScreen(packageName: String, message: String) {
         val intent = Intent(this, WarningActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
@@ -256,6 +298,41 @@ class MyBlockerService : AccessibilityService() {
         startActivity(intent)
     }
 
-    override fun onInterrupt() { removeFloatingOverlay() }
-    override fun onDestroy() { super.onDestroy(); removeFloatingOverlay() }
+    private fun showBlurOverlay(message: String) {
+        if (blurOverlayView == null) {
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT
+            )
+            
+            blurOverlayView = LayoutInflater.from(this).inflate(R.layout.layout_blur, null)
+            blurOverlayView?.findViewById<TextView>(R.id.tvBlurMessage)?.text = message
+            
+            blurOverlayView?.findViewById<View>(R.id.btnGoBack)?.setOnClickListener {
+                removeBlurOverlay()
+                performGlobalAction(GLOBAL_ACTION_BACK)
+            }
+            
+            blurOverlayView?.findViewById<View>(R.id.btnDismissBlur)?.setOnClickListener {
+                removeBlurOverlay()
+            }
+            
+            try {
+                windowManager?.addView(blurOverlayView, params)
+            } catch (e: Exception) {}
+        }
+    }
+
+    private fun removeBlurOverlay() {
+        blurOverlayView?.let {
+            try { windowManager?.removeView(it) } catch (e: Exception) {}
+            blurOverlayView = null
+        }
+    }
+
+    override fun onInterrupt() { removeFloatingOverlay(); removeBlurOverlay() }
+    override fun onDestroy() { super.onDestroy(); removeFloatingOverlay(); removeBlurOverlay() }
 }

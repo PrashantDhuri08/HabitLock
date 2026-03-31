@@ -43,9 +43,20 @@ class UsageAdapter(
         holder.appIcon.setImageDrawable(item.appIcon)
         
         val currentUsage = parseTimeToMinutes(item.usageTime).toFloat()
-        val limit = if (item.limitMinutes > 0) item.limitMinutes.toFloat() else 480f // Default max if no limit
+        val limit = if (item.limitMinutes > 0) item.limitMinutes.toFloat() else 0f
         
-        holder.appProgress.progress = ((currentUsage / limit) * 100).toInt().coerceAtMost(100)
+        val isReached = limit > 0 && currentUsage >= limit
+        
+        if (isReached) {
+            holder.appTime.setTextColor(0xFFFF4444.toInt()) // Red
+            holder.appProgress.progressDrawable.setTint(0xFFFF4444.toInt())
+        } else {
+            holder.appTime.setTextColor(0xFFFFFFFF.toInt()) // Standard White/Light
+            holder.appProgress.progressDrawable.setTintList(null)
+        }
+        
+        val limitProgress = if (limit > 0) ((currentUsage / limit) * 100).toInt() else 0
+        holder.appProgress.progress = limitProgress.coerceAtMost(100)
 
         holder.itemView.setOnClickListener { onSetLimitClick(item) }
     }
