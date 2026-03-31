@@ -3,9 +3,12 @@ package com.example.hlock
 import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
 import android.content.Context
+import android.Manifest
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.LayoutInflater
@@ -39,6 +42,13 @@ class MainActivity : AppCompatActivity() {
 
         if (!hasUsagePermission()) {
             startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+        }
+
+        // Request step counter permission for Android 10+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(Manifest.permission.ACTIVITY_RECOGNITION), 100)
+            }
         }
     }
 
@@ -95,18 +105,74 @@ class MainActivity : AppCompatActivity() {
         val swBlockExplicit = findViewById<SwitchMaterial>(R.id.swBlockExplicit)
         val swFocusMode = findViewById<SwitchMaterial>(R.id.swFocusMode)
         val swAntiUninstall = findViewById<SwitchMaterial>(R.id.swAntiUninstall)
+        val swGrayscale = findViewById<SwitchMaterial>(R.id.swGrayscale)
+        val swTimeElapsed = findViewById<SwitchMaterial>(R.id.swTimeElapsed)
+        val btnRedirectKeywords = findViewById<MaterialButton>(R.id.btnRedirectKeywords)
 
         swBlockReels.isChecked = sharedPrefs.getBoolean("block_reels", false)
         swBlockComments.isChecked = sharedPrefs.getBoolean("block_comments", false)
         swBlockExplicit.isChecked = sharedPrefs.getBoolean("block_explicit", false)
         swFocusMode.isChecked = sharedPrefs.getBoolean("focus_mode", false)
         swAntiUninstall.isChecked = sharedPrefs.getBoolean("anti_uninstall", false)
+        swGrayscale.isChecked = (sharedPrefs.getStringSet("grayscale_apps", emptySet())?.isNotEmpty() == true)
+        swTimeElapsed.isChecked = sharedPrefs.getBoolean("show_time_elapsed", false)
 
         swBlockReels.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("block_reels", isChecked).apply() }
         swBlockComments.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("block_comments", isChecked).apply() }
         swBlockExplicit.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("block_explicit", isChecked).apply() }
         swFocusMode.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("focus_mode", isChecked).apply() }
         swAntiUninstall.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("anti_uninstall", isChecked).apply() }
+        swTimeElapsed.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("show_time_elapsed", isChecked).apply() }
+
+        swGrayscale.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                showGrayscaleAppPicker()
+            } else {
+                sharedPrefs.edit().putStringSet("grayscale_apps", emptySet()).apply()
+            }
+        }
+
+        btnRedirectKeywords.setOnClickListener { showRedirectKeywordsDialog() }
+    }
+
+    private fun showGrayscaleAppPicker() {
+        val usageData = getTodayUsageData()
+        val appNames = usageData.map { it.appName }.toTypedArray()
+        val pkgNames = usageData.map { it.packageName }
+        val currentGrayscale = sharedPrefs.getStringSet("grayscale_apps", emptySet()) ?: emptySet()
+        val checkedItems = pkgNames.map { currentGrayscale.contains(it) }.toBooleanArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("Select apps to make B&W")
+            .setMultiChoiceItems(appNames, checkedItems) { _, which, isChecked ->
+                checkedItems[which] = isChecked
+            }
+            .setPositiveButton("Save") { _, _ ->
+                val selected = mutableSetOf<String>()
+                checkedItems.forEachIndexed { index, checked ->
+                    if (checked) selected.add(pkgNames[index])
+                }
+                sharedPrefs.edit().putStringSet("grayscale_apps", selected).apply()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showRedirectKeywordsDialog() {
+        val et = EditText(this)
+        val current = sharedPrefs.getString("redirect_words", "")
+        et.setText(current)
+        et.setHint("Comma separated keywords to redirect")
+
+        AlertDialog.Builder(this)
+            .setTitle("Redirect Keywords")
+            .setMessage("When these keywords are found, the user will be redirected to an educational website.")
+            .setView(et)
+            .setPositiveButton("Save") { _, _ ->
+                sharedPrefs.edit().putString("redirect_words", et.text.toString()).apply()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun showLimitDialog(app: AppUsageInfo) {
@@ -171,6 +237,18 @@ class MainActivity : AppCompatActivity() {
         val shorts = sharedPrefs.getInt("shorts_scroll_count", 0)
         val tiktok = sharedPrefs.getInt("tiktok_scroll_count", 0)
         findViewById<TextView>(R.id.tvTotalScrolls).text = "${reels + shorts + tiktok}"
+
+        // Populate pie chart
+        val pieChart = findViewById<PieChartView>(R.id.pieChart)
+        val slices = usageData.take(10).mapIndexed { index, app ->
+            val mins = parseTimeToMinutes(app.usageTime).toFloat()
+            PieChartView.Slice(
+                app.appName,
+                mins,
+                PieChartView.CHART_COLORS[index % PieChartView.CHART_COLORS.size]
+            )
+        }.filter { it.value > 0 }
+        pieChart.setData(slices)
     }
 
     private fun parseTimeToMinutes(timeStr: String): Int {

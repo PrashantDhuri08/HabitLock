@@ -5,8 +5,11 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -45,12 +48,46 @@ class MyBlockerService : AccessibilityService() {
     private var floatingView: View? = null
     private var currentPackage: String? = null
     private var blurOverlayView: View? = null
+    private var grayscaleOverlay: View? = null
+    private var timeElapsedView: View? = null
+    private var appOpenTime = 0L
     private val explicitWarningCooldowns = mutableMapOf<String, Long>()
     private val handler = Handler(Looper.getMainLooper())
     
+    // Redirect URLs for when blocked keywords are found
+    private val REDIRECT_URLS = listOf(
+        "https://www.khanacademy.org",
+        "https://en.wikipedia.org/wiki/Special:Random",
+        "https://www.duolingo.com",
+        "https://www.coursera.org",
+        "https://www.ted.com"
+    )
+
+    // Known explicit/adult domains and URL patterns
+    private val EXPLICIT_URL_PATTERNS = listOf(
+        "pornhub", "xvideos", "xnxx", "redtube", "youporn",
+        "xhamster", "brazzers", "onlyfans", "chaturbate",
+        "adult", "xxx", "nsfw", "18+", "nude"
+    )
+
+    // Content description patterns for explicit imagery
+    private val EXPLICIT_CONTENT_PATTERNS = listOf(
+        "sensitive content", "age-restricted", "mature content",
+        "adult content", "nudity", "graphic content", "18+",
+        "violence", "disturbing", "may contain", "viewer discretion",
+        "content warning", "nsfw", "sexually explicit"
+    )
+
     private val updateOverlayTask = object : Runnable {
         override fun run() {
             updateFloatingOverlay()
+            handler.postDelayed(this, 1000)
+        }
+    }
+
+    private val updateTimeElapsedTask = object : Runnable {
+        override fun run() {
+            updateTimeElapsedOverlay()
             handler.postDelayed(this, 1000)
         }
     }
@@ -75,6 +112,8 @@ class MyBlockerService : AccessibilityService() {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
             currentPackage = packageName
             handleOverlayVisibility(packageName, nodeInfo)
+            handleGrayscaleOverlay(packageName)
+            handleTimeElapsedOverlay(packageName)
             
             // 2. Strict Reels/Shorts Blocking
             if (sharedPrefs.getBoolean("block_reels", false)) {
@@ -86,8 +125,10 @@ class MyBlockerService : AccessibilityService() {
 
             // 3. App Limit Check
             if (isLimitReached(packageName)) {
-                showWarningScreen(packageName, "You've exceeded your daily limit for this app.")
-                return
+                if (!isTemporarilyUnlocked(packageName)) {
+                    showUnlockTaskScreen(packageName)
+                    return
+                }
             }
 
             // 4. Focus Mode
@@ -98,33 +139,44 @@ class MyBlockerService : AccessibilityService() {
                     return
                 }
             }
-        }
 
-        // 4. Comments Blocking
-        if (sharedPrefs.getBoolean("block_comments", false)) {
-            if (isViewingComments(packageName, nodeInfo)) {
-                blockAction("Comments hidden")
-                return
-            }
-        }
-
-        // 5. Explicit Content
-        if (sharedPrefs.getBoolean("block_explicit", false)) {
-            val cooldown = explicitWarningCooldowns[packageName] ?: 0L
-            if (System.currentTimeMillis() - cooldown > 30000) { // 30 second cooldown
-                if (containsExplicitContent(nodeInfo)) {
-                    explicitWarningCooldowns[packageName] = System.currentTimeMillis()
-                    showBlurOverlay("Explicit Content Notification")
+            // 5. Comments Blocking
+            if (sharedPrefs.getBoolean("block_comments", false)) {
+                if (isViewingComments(packageName, nodeInfo)) {
+                    blockAction("Comments hidden")
                     return
                 }
             }
-        }
 
-        // 6. Security (Anti-Uninstall)
-        if (packageName == "com.android.settings" && sharedPrefs.getBoolean("anti_uninstall", false)) {
-            if (isTryingToUninstall(nodeInfo)) {
-                blockAction("Uninstall protection active")
-                return
+            // 6. Explicit Content (Enhanced detection)
+            if (sharedPrefs.getBoolean("block_explicit", false)) {
+                val cooldown = explicitWarningCooldowns[packageName] ?: 0L
+                if (System.currentTimeMillis() - cooldown > 30000) {
+                    if (containsExplicitContent(nodeInfo)) {
+                        explicitWarningCooldowns[packageName] = System.currentTimeMillis()
+                        showBlurOverlay("Explicit Content Detected")
+                        return
+                    }
+                }
+            }
+
+            // 7. Keyword redirect - redirect to educational site instead of blocking
+            val redirectKeywords = sharedPrefs.getString("redirect_words", "")?.split(",")?.map { it.trim().lowercase() }?.filter { it.isNotEmpty() }
+            if (!redirectKeywords.isNullOrEmpty()) {
+                for (word in redirectKeywords) {
+                    if (nodeInfo.findAccessibilityNodeInfosByText(word).isNotEmpty()) {
+                        redirectToEducationalSite()
+                        return
+                    }
+                }
+            }
+
+            // 8. Security (Anti-Uninstall)
+            if (packageName == "com.android.settings" && sharedPrefs.getBoolean("anti_uninstall", false)) {
+                if (isTryingToUninstall(nodeInfo)) {
+                    blockAction("Uninstall protection active")
+                    return
+                }
             }
         }
 
@@ -228,11 +280,53 @@ class MyBlockerService : AccessibilityService() {
     }
 
     private fun containsExplicitContent(nodeInfo: AccessibilityNodeInfo): Boolean {
+        // 1. Keyword-based detection
         val userWords = sharedPrefs.getString("explicit_words", "nsfw,porn,sexy,adult,gamble,casino") ?: ""
         val keywords = userWords.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
-        
         for (word in keywords) {
             if (nodeInfo.findAccessibilityNodeInfosByText(word).isNotEmpty()) return true
+        }
+
+        // 2. URL pattern detection - scan all text nodes for adult URLs
+        val allText = collectAllText(nodeInfo).lowercase()
+        for (pattern in EXPLICIT_URL_PATTERNS) {
+            if (allText.contains(pattern)) return true
+        }
+
+        // 3. Content description detection - check for platform warnings
+        for (pattern in EXPLICIT_CONTENT_PATTERNS) {
+            if (allText.contains(pattern)) return true
+        }
+
+        // 4. Check node content descriptions for age-restricted markers
+        if (hasExplicitContentDescriptions(nodeInfo)) return true
+
+        return false
+    }
+
+    private fun collectAllText(node: AccessibilityNodeInfo, depth: Int = 0): String {
+        if (depth > 10) return "" // Prevent deep recursion
+        val sb = StringBuilder()
+        node.text?.let { sb.append(it).append(" ") }
+        node.contentDescription?.let { sb.append(it).append(" ") }
+        for (i in 0 until node.childCount) {
+            node.getChild(i)?.let { child ->
+                sb.append(collectAllText(child, depth + 1))
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun hasExplicitContentDescriptions(node: AccessibilityNodeInfo, depth: Int = 0): Boolean {
+        if (depth > 8) return false
+        val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+        for (pattern in EXPLICIT_CONTENT_PATTERNS) {
+            if (desc.contains(pattern)) return true
+        }
+        for (i in 0 until node.childCount) {
+            node.getChild(i)?.let { child ->
+                if (hasExplicitContentDescriptions(child, depth + 1)) return true
+            }
         }
         return false
     }
@@ -289,6 +383,30 @@ class MyBlockerService : AccessibilityService() {
         return (totalTime / (1000 * 60)) >= limitMinutes
     }
 
+    private fun isTemporarilyUnlocked(packageName: String): Boolean {
+        val unlockUntil = sharedPrefs.getLong("unlock_$packageName", 0L)
+        return System.currentTimeMillis() < unlockUntil
+    }
+
+    private fun showUnlockTaskScreen(packageName: String) {
+        val intent = Intent(this, UnlockTaskActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            putExtra("blocked_package", packageName)
+        }
+        startActivity(intent)
+    }
+
+    private fun redirectToEducationalSite() {
+        val url = REDIRECT_URLS.random()
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        try {
+            startActivity(intent)
+            Toast.makeText(this, "Redirected! Learn something new 📚", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {}
+    }
+
     private fun showWarningScreen(packageName: String, message: String) {
         val intent = Intent(this, WarningActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
@@ -296,6 +414,103 @@ class MyBlockerService : AccessibilityService() {
             putExtra("warning_message", message)
         }
         startActivity(intent)
+    }
+
+    // ===== GRAYSCALE OVERLAY =====
+    private fun handleGrayscaleOverlay(packageName: String) {
+        val grayscaleApps = sharedPrefs.getStringSet("grayscale_apps", emptySet()) ?: emptySet()
+        if (grayscaleApps.contains(packageName)) {
+            showGrayscaleOverlay()
+        } else {
+            removeGrayscaleOverlay()
+        }
+    }
+
+    private fun showGrayscaleOverlay() {
+        if (grayscaleOverlay == null) {
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT
+            )
+
+            grayscaleOverlay = View(this)
+            val colorMatrix = ColorMatrix()
+            colorMatrix.setSaturation(0f) // 0 = full grayscale
+            grayscaleOverlay?.apply {
+                setLayerType(View.LAYER_TYPE_HARDWARE, android.graphics.Paint().apply {
+                    colorFilter = ColorMatrixColorFilter(colorMatrix)
+                })
+                alpha = 0.85f
+                setBackgroundColor(0x01000000) // Nearly transparent but active
+            }
+
+            try {
+                windowManager?.addView(grayscaleOverlay, params)
+            } catch (e: Exception) {}
+        }
+    }
+
+    private fun removeGrayscaleOverlay() {
+        grayscaleOverlay?.let {
+            try { windowManager?.removeView(it) } catch (e: Exception) {}
+            grayscaleOverlay = null
+        }
+    }
+
+    // ===== TIME ELAPSED OVERLAY =====
+    private fun handleTimeElapsedOverlay(packageName: String) {
+        val showTimer = sharedPrefs.getBoolean("show_time_elapsed", false)
+        if (showTimer && packageName != this.packageName) {
+            if (currentPackage != packageName) {
+                appOpenTime = System.currentTimeMillis()
+            }
+            showTimeElapsedOverlay()
+        } else {
+            removeTimeElapsedOverlay()
+        }
+    }
+
+    private fun showTimeElapsedOverlay() {
+        if (timeElapsedView == null) {
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT
+            )
+            params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            params.y = 120
+
+            timeElapsedView = LayoutInflater.from(this).inflate(R.layout.layout_time_elapsed, null)
+            try {
+                windowManager?.addView(timeElapsedView, params)
+                handler.post(updateTimeElapsedTask)
+            } catch (e: Exception) {}
+        }
+    }
+
+    private fun removeTimeElapsedOverlay() {
+        timeElapsedView?.let {
+            try { windowManager?.removeView(it) } catch (e: Exception) {}
+            timeElapsedView = null
+            handler.removeCallbacks(updateTimeElapsedTask)
+        }
+    }
+
+    private fun updateTimeElapsedOverlay() {
+        if (appOpenTime <= 0L) return
+        val elapsedSecs = (System.currentTimeMillis() - appOpenTime) / 1000
+        val mins = elapsedSecs / 60
+        val secs = elapsedSecs % 60
+        val text = if (mins > 0) "${mins}m ${secs}s" else "${secs}s"
+        timeElapsedView?.findViewById<TextView>(R.id.tvTimeElapsed)?.text = "⏱ $text"
     }
 
     private fun showBlurOverlay(message: String) {
@@ -333,6 +548,13 @@ class MyBlockerService : AccessibilityService() {
         }
     }
 
-    override fun onInterrupt() { removeFloatingOverlay(); removeBlurOverlay() }
-    override fun onDestroy() { super.onDestroy(); removeFloatingOverlay(); removeBlurOverlay() }
+    private fun removeAllOverlays() {
+        removeFloatingOverlay()
+        removeBlurOverlay()
+        removeGrayscaleOverlay()
+        removeTimeElapsedOverlay()
+    }
+
+    override fun onInterrupt() { removeAllOverlays() }
+    override fun onDestroy() { super.onDestroy(); removeAllOverlays() }
 }

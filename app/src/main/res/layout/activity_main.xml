@@ -178,6 +178,72 @@
                     android:text="Security (Anti-Uninstall)"
                     android:textColor="@color/text_primary" />
 
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#1AFFFFFF"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="12dp"/>
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swGrayscale"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Grayscale Mode (Boring Apps)"
+                    android:textColor="@color/text_primary" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swTimeElapsed"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Show Time Elapsed On Screen"
+                    android:textColor="@color/text_primary" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnRedirectKeywords"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Redirect Keywords"
+                    android:textColor="@color/accent_green"
+                    android:textSize="12sp"
+                    android:textAllCaps="false"/>
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Pie Chart Section -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cvPieChart"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="16dp"
+            android:layout_marginTop="16dp"
+            app:cardBackgroundColor="@color/card_dark"
+            app:cardCornerRadius="20dp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@+id/cvFeatures">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Usage Breakdown"
+                    android:textColor="@color/accent_green"
+                    android:fontFamily="sans-serif-bold"
+                    android:textSize="18sp"
+                    android:layout_marginBottom="8dp"/>
+
+                <com.example.hlock.PieChartView
+                    android:id="@+id/pieChart"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -192,7 +258,7 @@
             app:cardCornerRadius="20dp"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/cvFeatures">
+            app:layout_constraintTop_toBottomOf="@+id/cvPieChart">
 
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:layout_width="match_parent"
