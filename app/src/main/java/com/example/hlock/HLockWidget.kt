@@ -52,11 +52,13 @@ class HLockWidget : AppWidgetProvider() {
             calendar.set(Calendar.HOUR_OF_DAY, 0)
             calendar.set(Calendar.MINUTE, 0)
             calendar.set(Calendar.SECOND, 0)
-
-            val events = usm.queryEvents(calendar.timeInMillis, System.currentTimeMillis())
-            val startTimes = mutableMapOf<String, Long>()
-            var totalTime = 0L
+            calendar.set(Calendar.MILLISECOND, 0)
+            val startTime = calendar.timeInMillis
             val endTime = System.currentTimeMillis()
+
+            val events = usm.queryEvents(startTime, endTime)
+            val statsMap = mutableMapOf<String, Long>()
+            val startTimes = mutableMapOf<String, Long>()
 
             val event = android.app.usage.UsageEvents.Event()
             while (events.hasNextEvent()) {
@@ -68,15 +70,19 @@ class HLockWidget : AppWidgetProvider() {
                     android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED -> {
                         val start = startTimes.remove(event.packageName)
                         if (start != null) {
-                            totalTime += event.timeStamp - start
+                            val duration = event.timeStamp - start
+                            statsMap[event.packageName] = (statsMap[event.packageName] ?: 0L) + duration
                         }
                     }
                 }
             }
-            // Add currently active
-            startTimes.values.forEach { start -> totalTime += endTime - start }
+            // Add currently foreground active app
+            startTimes.forEach { (pkg, start) ->
+                statsMap[pkg] = (statsMap[pkg] ?: 0L) + (endTime - start)
+            }
 
-            return totalTime / (1000 * 60)
+            val totalMins = statsMap.values.sum() / (1000 * 60)
+            return totalMins
         }
 
         private fun getAppsUsedToday(context: Context): Int {
@@ -85,9 +91,26 @@ class HLockWidget : AppWidgetProvider() {
             calendar.set(Calendar.HOUR_OF_DAY, 0)
             calendar.set(Calendar.MINUTE, 0)
             calendar.set(Calendar.SECOND, 0)
-
-            val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, calendar.timeInMillis, System.currentTimeMillis())
-            return stats.count { it.totalTimeInForeground > 60000 } // More than 1 min
+            calendar.set(Calendar.MILLISECOND, 0)
+            val startTime = calendar.timeInMillis
+            
+            val statsMap = mutableMapOf<String, Long>()
+            val startTimes = mutableMapOf<String, Long>()
+            val events = usm.queryEvents(startTime, System.currentTimeMillis())
+            val event = android.app.usage.UsageEvents.Event()
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED) {
+                    startTimes[event.packageName] = event.timeStamp
+                } else if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED) {
+                    val start = startTimes.remove(event.packageName)
+                    if (start != null) {
+                        statsMap[event.packageName] = (statsMap[event.packageName] ?: 0L) + (event.timeStamp - start)
+                    }
+                }
+            }
+            // Include apps with at least 1 min usage
+            return statsMap.count { it.value > 60000 }
         }
     }
 }

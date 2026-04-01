@@ -30,7 +30,16 @@ class ScrollAnalyticsActivity : AppCompatActivity() {
 
         findViewById<TextView>(R.id.tvBigScrollCount).text = String.format("%, d", total)
 
-        // Mock velocity and session data based on total scrolls
+        // Populate the bar chart
+        val chart = findViewById<BarChartView>(R.id.scrollBarChart)
+        val barData = listOf(
+            BarChartView.BarData("Reels", reels.toFloat(), 0xFFE91E63.toInt()),
+            BarChartView.BarData("Shorts", shorts.toFloat(), 0xFFFF0000.toInt()),
+            BarChartView.BarData("TikTok", tiktok.toFloat(), 0xFF00D261.toInt())
+        )
+        chart.setData(barData)
+
+        // Update velocity and session data
         findViewById<TextView>(R.id.tvVelocity).text = "${total / 20} S/min"
         findViewById<TextView>(R.id.tvAvgSession).text = "${total / 5} scrolls"
 

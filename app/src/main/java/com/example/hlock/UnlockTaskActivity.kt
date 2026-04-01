@@ -108,6 +108,13 @@ class UnlockTaskActivity : AppCompatActivity(), SensorEventListener {
 
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         stepSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+
+        findViewById<com.google.android.material.button.MaterialButton>(R.id.btnCancelTask).setOnClickListener {
+            layoutTaskExecution.visibility = View.GONE
+            layoutTaskSelection.visibility = View.VISIBLE
+            sensorManager?.unregisterListener(this)
+            cooldownTimer?.cancel()
+        }
     }
 
     private fun setupTaskCards() {
@@ -121,6 +128,7 @@ class UnlockTaskActivity : AppCompatActivity(), SensorEventListener {
         findViewById<View>(R.id.cardMathProblems).setOnClickListener { startMathTask() }
         findViewById<View>(R.id.cardCooldown).setOnClickListener { startCooldownTask() }
         findViewById<View>(R.id.cardTypePhrase).setOnClickListener { startPhraseTask() }
+        findViewById<View>(R.id.cardReadArticle).setOnClickListener { startReadingTask() }
     }
 
     private fun showTaskExecution() {
@@ -269,11 +277,52 @@ class UnlockTaskActivity : AppCompatActivity(), SensorEventListener {
     }
 
     // =====================
-    // Task Completion
+    // TASK 5: Productive Reading
     // =====================
+    private fun startReadingTask() {
+        showTaskExecution()
+        tvTaskTitle.text = "💡 Productive Reading"
+        tvTaskInstruction.text = "Opening a useful article. Read for 1 minute to unlock."
+        pbTask.max = 60
+        pbTask.progress = 0
+        tvTaskProgress.text = "Initializing..."
+
+        val productiveUrls = listOf(
+            "https://www.khanacademy.org",
+            "https://en.wikipedia.org/wiki/Special:Random",
+            "https://www.ted.com",
+            "https://www.duolingo.com",
+            "https://www.coursera.org",
+            "https://medium.com/topic/self-improvement"
+        )
+        val url = productiveUrls.random()
+        
+        try {
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+            startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Could not open browser", Toast.LENGTH_SHORT).show()
+        }
+
+        // Start a 1-minute timer that continues even if they leave
+        cooldownTimer = object : android.os.CountDownTimer(60 * 1000L, 1000) {
+            override fun onTick(remaining: Long) {
+                val secs = (remaining / 1000).toInt()
+                tvTaskProgress.text = "Stay on article: $secs s left"
+                pbTask.progress = 60 - secs
+            }
+
+            override fun onFinish() {
+                tvTaskProgress.text = "Reading Completed!"
+                pbTask.progress = 60
+                onTaskCompleted()
+            }
+        }.start()
+    }
     private fun onTaskCompleted() {
         blockedPackage?.let { pkg ->
-            val unlockUntil = System.currentTimeMillis() + UNLOCK_DURATION_MS
+            val durationMins = sharedPrefs.getLong("unlock_duration_mins", 15)
+            val unlockUntil = System.currentTimeMillis() + (durationMins * 60 * 1000L)
             sharedPrefs.edit().putLong("unlock_$pkg", unlockUntil).apply()
         }
 
@@ -286,8 +335,14 @@ class UnlockTaskActivity : AppCompatActivity(), SensorEventListener {
         layoutMathProblem.visibility = View.GONE
         layoutTypePhrase.visibility = View.GONE
 
-        // Auto-finish after a short delay
-        tvTaskProgress.postDelayed({ finish() }, 2000)
+        // Auto-finish and show dashboard after a short delay
+        tvTaskProgress.postDelayed({ 
+            val intent = android.content.Intent(this, MainActivity::class.java).apply {
+                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK
+            }
+            startActivity(intent)
+            finish() 
+        }, 3000)
     }
 
     override fun onPause() {

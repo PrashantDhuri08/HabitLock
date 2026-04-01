@@ -45,15 +45,31 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/tvWarningTitle" />
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnBack"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="32dp"
-        android:padding="12dp"
-        android:text="Go Back"
-        app:cornerRadius="12dp"
+        android:orientation="vertical"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/tvWarningMessage" />
+        app:layout_constraintTop_toBottomOf="@+id/tvWarningMessage">
+
+        <Button
+            android:id="@+id/btnBack"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="I will focus now"
+            android:backgroundTint="@color/accent_green"
+            android:textColor="@color/bg_dark" />
+
+        <Button
+            android:id="@+id/btnExtend"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Extend 5 Minutes"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:textColor="@color/accent_green" />
+
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.LayoutInflater
+import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -123,16 +124,101 @@ class MainActivity : AppCompatActivity() {
         swFocusMode.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("focus_mode", isChecked).apply() }
         swAntiUninstall.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("anti_uninstall", isChecked).apply() }
         swTimeElapsed.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("show_time_elapsed", isChecked).apply() }
+        
+        val swCheatHours = findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.swCheatHours)
+        val btnSetCheatHours = findViewById<com.google.android.material.button.MaterialButton>(R.id.btnSetCheatHours)
+        
+        swCheatHours.isChecked = sharedPrefs.getBoolean("cheat_hours_enabled", false)
+        swCheatHours.setOnCheckedChangeListener { _, isChecked -> sharedPrefs.edit().putBoolean("cheat_hours_enabled", isChecked).apply() }
+        
+        btnSetCheatHours.setOnClickListener { showCheatHoursDialog() }
+        findViewById<View>(R.id.btnManageWarningScreen).setOnClickListener { showWarningSettingsDialog() }
 
+        swGrayscale.isChecked = sharedPrefs.getBoolean("grayscale_enabled_global", true)
         swGrayscale.setOnCheckedChangeListener { _, isChecked ->
-            if (isChecked) {
-                showGrayscaleAppPicker()
-            } else {
-                sharedPrefs.edit().putStringSet("grayscale_apps", emptySet()).apply()
-            }
+            sharedPrefs.edit().putBoolean("grayscale_enabled_global", isChecked).apply()
+            if (isChecked) showGrayscaleAppPicker()
         }
 
         btnRedirectKeywords.setOnClickListener { showRedirectKeywordsDialog() }
+    }
+
+    private fun showCheatHoursDialog() {
+        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_cheat_hours, null)
+        val picker = dialogView.findViewById<CheatHoursPickerView>(R.id.cheatHoursPicker)
+        val tvRange = dialogView.findViewById<TextView>(R.id.tvCheatTimeRange)
+        
+        val currentRange = sharedPrefs.getString("cheat_hours_range", "21:00-22:00") ?: "21:00-22:00"
+        try {
+            val parts = currentRange.split("-")
+            val start = parts[0].split(":")
+            val end = parts[1].split(":")
+            picker.startMinutes = start[0].toInt() * 60 + start[1].toInt()
+            picker.endMinutes = end[0].toInt() * 60 + end[1].toInt()
+        } catch (e: Exception) {}
+
+        val updateText = { s: Int, e: Int ->
+            tvRange.text = "From ${formatMinutes(s)} to ${formatMinutes(e)}"
+        }
+        updateText(picker.startMinutes, picker.endMinutes)
+        picker.onRangeChanged = updateText
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .create()
+
+        dialogView.findViewById<Button>(R.id.btnCancel).setOnClickListener { dialog.dismiss() }
+        dialogView.findViewById<Button>(R.id.btnSave).setOnClickListener {
+            val range = "${formatMinutes(picker.startMinutes)}-${formatMinutes(picker.endMinutes)}"
+            sharedPrefs.edit().putString("cheat_hours_range", range).apply()
+            dialog.dismiss()
+        }
+        dialog.show()
+    }
+
+    private fun showWarningSettingsDialog() {
+        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_warning_settings, null)
+        val tvDuration = dialogView.findViewById<TextView>(R.id.tvUnlockDuration)
+        val cbInbox = dialogView.findViewById<CheckBox>(R.id.cbAllowInboxReels)
+        val cbDirect = dialogView.findViewById<CheckBox>(R.id.cbShowWarningScreen)
+        val etMessage = dialogView.findViewById<EditText>(R.id.etWarningMessage)
+        
+        var duration = sharedPrefs.getLong("unlock_duration_mins", 15)
+        tvDuration.text = duration.toString()
+        cbInbox.isChecked = sharedPrefs.getBoolean("allow_ig_inbox_reels", false)
+        cbDirect.isChecked = !sharedPrefs.getBoolean("reels_direct_back", false)
+        etMessage.setText(sharedPrefs.getString("warning_message_reels", "Focus on what matters!"))
+
+        dialogView.findViewById<Button>(R.id.btnMinusMinutes).setOnClickListener {
+            if (duration > 1) {
+                duration--
+                tvDuration.text = duration.toString()
+            }
+        }
+        dialogView.findViewById<Button>(R.id.btnPlusMinutes).setOnClickListener {
+            duration++
+            tvDuration.text = duration.toString()
+        }
+
+        val dialog = AlertDialog.Builder(this).setView(dialogView).create()
+        dialogView.findViewById<Button>(R.id.btnCancelWarning).setOnClickListener { dialog.dismiss() }
+        dialogView.findViewById<Button>(R.id.btnSaveWarning).setOnClickListener {
+            sharedPrefs.edit().apply {
+                putLong("unlock_duration_mins", duration)
+                putBoolean("allow_ig_inbox_reels", cbInbox.isChecked)
+                putBoolean("reels_direct_back", !cbDirect.isChecked)
+                putString("warning_message_reels", etMessage.text.toString())
+                apply()
+            }
+            dialog.dismiss()
+        }
+        dialog.show()
+    }
+
+    private fun formatMinutes(totalMinutes: Int): String {
+        val h = (totalMinutes / 60) % 24
+        val m = totalMinutes % 60
+        return String.format("%02d:%02d", h, m)
     }
 
     private fun showGrayscaleAppPicker() {
@@ -195,10 +281,13 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Set Limit") { _, _ ->
                 val totalMinutes = (npHours.value * 60) + npMinutes.value
                 sharedPrefs.edit().putInt(app.packageName, totalMinutes).apply()
+                // Clear temporary unlock when changing limits to ensure logic is fresh
+                sharedPrefs.edit().remove("unlock_${app.packageName}").apply()
                 updateDashboard()
             }
             .setNegativeButton("Remove Limit") { _, _ ->
                 sharedPrefs.edit().remove(app.packageName).apply()
+                sharedPrefs.edit().remove("unlock_${app.packageName}").apply()
                 updateDashboard()
             }
             .show()
@@ -230,9 +319,6 @@ class MainActivity : AppCompatActivity() {
         val minutes = totalMinutes % 60
         findViewById<TextView>(R.id.tvTotalUsage).text = "${hours}h ${minutes}m"
         
-        val progress = ((totalMinutes.toFloat() / 480f) * 480).toInt()
-        findViewById<ProgressBar>(R.id.pbDailyUsage).progress = progress
-
         val reels = sharedPrefs.getInt("reels_scroll_count", 0)
         val shorts = sharedPrefs.getInt("shorts_scroll_count", 0)
         val tiktok = sharedPrefs.getInt("tiktok_scroll_count", 0)

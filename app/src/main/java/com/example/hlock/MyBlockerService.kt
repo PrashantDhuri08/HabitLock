@@ -36,7 +36,27 @@ class MyBlockerService : AccessibilityService() {
 
         val REELS_VIEW_IDS = listOf(
             "com.instagram.android:id/root_clips_layout",
-            "com.google.android.youtube:id/reel_recycler"
+            "com.myinsta.android:id/root_clips_layout",
+            "com.google.android.youtube:id/reel_recycler",
+            "app.revanced.android.youtube:id/reel_recycler",
+            "com.instagram.android:id/clips_video_container",
+            "com.google.android.youtube:id/reels_video_player_view",
+            "com.google.android.youtube:id/shorts_main_container",
+            "com.google.android.youtube:id/shorts_view_pager",
+            "com.google.android.youtube:id/reel_video_player"
+        )
+        
+        const val COOLDOWN_MS = 300L
+        const val EMA_ALPHA = 0.15f
+        const val BOOTSTRAP_COUNT = 15
+        
+        val DEFAULT_THRESHOLD = mapOf(
+            INSTAGRAM_PACKAGE to 2,
+            YOUTUBE_PACKAGE to 2,
+            "com.facebook.katana" to 2,
+            "com.ss.android.ugc.trill" to 1,
+            "com.zhiliaoapp.musically" to 1,
+            "com.ss.android.ugc.aweme" to 1
         )
     }
     
@@ -50,9 +70,16 @@ class MyBlockerService : AccessibilityService() {
     private var blurOverlayView: View? = null
     private var grayscaleOverlay: View? = null
     private var timeElapsedView: View? = null
+    private var unlockTimerView: View? = null
     private var appOpenTime = 0L
     private val explicitWarningCooldowns = mutableMapOf<String, Long>()
+    private var lastBlockTime = 0L
     private val handler = Handler(Looper.getMainLooper())
+    
+    private val scrollCounters = mutableMapOf<String, Int>()
+    private val lastCountTime = mutableMapOf<String, Long>()
+    private val learnedThresholds = mutableMapOf<String, Float>()
+    private val totalSwipesSeen = mutableMapOf<String, Int>()
     
     // Redirect URLs for when blocked keywords are found
     private val REDIRECT_URLS = listOf(
@@ -92,6 +119,13 @@ class MyBlockerService : AccessibilityService() {
         }
     }
 
+    private val updateUnlockTimerTask = object : Runnable {
+        override fun run() {
+            updateUnlockTimerOverlay()
+            handler.postDelayed(this, 1000)
+        }
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         sharedPrefs = getSharedPreferences("AppLimits", Context.MODE_PRIVATE)
@@ -101,37 +135,52 @@ class MyBlockerService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val packageName = event.packageName?.toString() ?: return
         
-        // 1. Safety: NEVER block our own app
         if (packageName == this.packageName) {
-            removeFloatingOverlay() // Don't show overlay on our app
+            removeFloatingOverlay()
+            removeGrayscaleOverlay()
+            removeTimeElapsedOverlay()
             return
         }
 
         val nodeInfo = rootInActiveWindow ?: return
 
+        // 2. Window state changed or content changed - handle blocking and overlays
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            currentPackage = packageName
             handleOverlayVisibility(packageName, nodeInfo)
             handleGrayscaleOverlay(packageName)
             handleTimeElapsedOverlay(packageName)
+            currentPackage = packageName
             
-            // 2. Strict Reels/Shorts Blocking
-            if (sharedPrefs.getBoolean("block_reels", false)) {
+            // Extension Timer Visibility
+            if (isTemporarilyUnlocked(packageName)) {
+                showUnlockTimerOverlay(packageName)
+            } else {
+                removeUnlockTimerOverlay()
+            }
+
+            // A. Strict Reels/Shorts Blocking
+            if (sharedPrefs.getBoolean("block_reels", false) && !isCheatHourActive()) {
                 if (isViewingReels(packageName, nodeInfo)) {
-                    blockAction("Reels are restricted by HLock")
-                    return
+                    if (shouldBlockReelsNow(packageName)) {
+                        if (sharedPrefs.getBoolean("reels_direct_back", false)) {
+                            blockAction("Reels are blocked (Direct Exit)")
+                        } else {
+                            showWarningScreen(packageName, "Reels and Shorts are restricted")
+                        }
+                        return
+                    }
                 }
             }
 
-            // 3. App Limit Check
-            if (isLimitReached(packageName)) {
+            // B. App Limit Check
+            if (isLimitReached(packageName) && !isCheatHourActive()) {
                 if (!isTemporarilyUnlocked(packageName)) {
                     showUnlockTaskScreen(packageName)
                     return
                 }
             }
 
-            // 4. Focus Mode
+            // C. Focus Mode
             if (sharedPrefs.getBoolean("focus_mode", false)) {
                 val focusApps = sharedPrefs.getStringSet("focus_apps", emptySet()) ?: emptySet()
                 if (focusApps.contains(packageName) || TIKTOK_PACKAGES.contains(packageName) || packageName == INSTAGRAM_PACKAGE) {
@@ -140,15 +189,15 @@ class MyBlockerService : AccessibilityService() {
                 }
             }
 
-            // 5. Comments Blocking
+            // D. Comments Blocking
             if (sharedPrefs.getBoolean("block_comments", false)) {
                 if (isViewingComments(packageName, nodeInfo)) {
-                    blockAction("Comments hidden")
+                    blockAction("Comments are hidden by HabitLock")
                     return
                 }
             }
 
-            // 6. Explicit Content (Enhanced detection)
+            // E. Explicit Content (Enhanced detection)
             if (sharedPrefs.getBoolean("block_explicit", false)) {
                 val cooldown = explicitWarningCooldowns[packageName] ?: 0L
                 if (System.currentTimeMillis() - cooldown > 30000) {
@@ -160,7 +209,7 @@ class MyBlockerService : AccessibilityService() {
                 }
             }
 
-            // 7. Keyword redirect - redirect to educational site instead of blocking
+            // F. Keyword redirect
             val redirectKeywords = sharedPrefs.getString("redirect_words", "")?.split(",")?.map { it.trim().lowercase() }?.filter { it.isNotEmpty() }
             if (!redirectKeywords.isNullOrEmpty()) {
                 for (word in redirectKeywords) {
@@ -171,7 +220,7 @@ class MyBlockerService : AccessibilityService() {
                 }
             }
 
-            // 8. Security (Anti-Uninstall)
+            // G. Security (Anti-Uninstall)
             if (packageName == "com.android.settings" && sharedPrefs.getBoolean("anti_uninstall", false)) {
                 if (isTryingToUninstall(nodeInfo)) {
                     blockAction("Uninstall protection active")
@@ -180,44 +229,141 @@ class MyBlockerService : AccessibilityService() {
             }
         }
 
-        // 7. Scroll Tracking
-        if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
-            val currentTime = System.currentTimeMillis()
-            if (currentTime - lastScrollTime > SCROLL_DEBOUNCE_MS) {
-                if (isViewingReels(packageName, nodeInfo)) {
-                    val key = when {
-                        packageName == INSTAGRAM_PACKAGE -> "reels_scroll_count"
-                        packageName == YOUTUBE_PACKAGE -> "shorts_scroll_count"
-                        TIKTOK_PACKAGES.contains(packageName) -> "tiktok_scroll_count"
-                        else -> null
-                    }
-                    key?.let { trackScroll(it); updateFloatingOverlay() }
-                }
-                lastScrollTime = currentTime
+        // 3. Button Click Popups
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            if (isReelButtonClick(nodeInfo)) {
+                Toast.makeText(this, "Reels/Shorts Blocked", Toast.LENGTH_SHORT).show()
+            } else if (isCommentButtonClick(nodeInfo)) {
+                Toast.makeText(this, "Comments hidden", Toast.LENGTH_SHORT).show()
             }
         }
+
+        // 4. Scroll Tracking (Advanced EMA based counting)
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            if (isReelScrollEvent(event)) {
+                handleReelScroll(packageName)
+            }
+        }
+    }
+
+    private fun handleReelScroll(pkg: String) {
+        val now = System.currentTimeMillis()
+        val lastTime = lastCountTime[pkg] ?: 0L
+
+        // Cooldown to prevent double counting
+        if (now - lastTime < COOLDOWN_MS && lastTime > 0L) {
+            scrollCounters[pkg] = 0
+            return
+        }
+
+        val counter = (scrollCounters[pkg] ?: 0) + 1
+        scrollCounters[pkg] = counter
+
+        // Adaptive threshold logic (EMA)
+        val seen = totalSwipesSeen[pkg] ?: 0
+        val threshold = if (seen < BOOTSTRAP_COUNT) {
+            DEFAULT_THRESHOLD[pkg] ?: 2
+        } else {
+            (learnedThresholds[pkg] ?: (DEFAULT_THRESHOLD[pkg]?.toFloat() ?: 2f)).toInt().coerceAtLeast(1)
+        }
+
+        if (counter >= threshold) {
+            scrollCounters[pkg] = 0
+            lastCountTime[pkg] = now
+            
+            // Increment Stats
+            val key = when {
+                pkg == INSTAGRAM_PACKAGE || pkg.contains("myinsta") -> "reels_scroll_count"
+                pkg == YOUTUBE_PACKAGE || pkg.contains("revanced") -> "shorts_scroll_count"
+                pkg == "com.facebook.katana" -> "reels_scroll_count" 
+                TIKTOK_PACKAGES.contains(pkg) -> "tiktok_scroll_count"
+                else -> null
+            }
+            key?.let { trackScroll(it); updateFloatingOverlay() }
+            
+            // Update Threshold
+            val current = learnedThresholds[pkg] ?: (DEFAULT_THRESHOLD[pkg]?.toFloat() ?: 2f)
+            learnedThresholds[pkg] = EMA_ALPHA * counter + (1 - EMA_ALPHA) * current
+            totalSwipesSeen[pkg] = seen + 1
+        }
+    }
+
+    private fun isReelScrollEvent(event: AccessibilityEvent): Boolean {
+        val pkg = event.packageName?.toString() ?: return false
+        val className = event.className?.toString() ?: ""
+        val nodeInfo = rootInActiveWindow ?: return false
+
+        return try {
+            when {
+                TIKTOK_PACKAGES.contains(pkg) && className.contains("ViewPager") -> true
+                
+                pkg == INSTAGRAM_PACKAGE && (className.contains("ViewPager") || className.contains("RecyclerView")) -> {
+                    isViewingReels(pkg, nodeInfo)
+                }
+
+                (pkg == YOUTUBE_PACKAGE || pkg.contains("revanced")) && className.contains("RecyclerView") -> {
+                    val isReel = nodeInfo.findAccessibilityNodeInfosByViewId("com.google.android.youtube:id/reel_recycler").isNotEmpty() ||
+                                 nodeInfo.findAccessibilityNodeInfosByViewId("app.revanced.android.youtube:id/reel_recycler").isNotEmpty()
+                    val engagementPanel = nodeInfo.findAccessibilityNodeInfosByViewId("com.google.android.youtube:id/engagement_panel_content").isNotEmpty() ||
+                                          nodeInfo.findAccessibilityNodeInfosByViewId("app.revanced.android.youtube:id/engagement_panel_content").isNotEmpty()
+                    isReel && !engagementPanel
+                }
+
+                pkg == "com.facebook.katana" && className.contains("RecyclerView") -> {
+                    nodeInfo.findAccessibilityNodeInfosByText("FbShortsComposerAttachmentComponentSpec_STICKER").isNotEmpty()
+                }
+
+                else -> false
+            }
+        } catch (_: Exception) { false }
     }
 
     private fun isViewingReels(packageName: String, nodeInfo: AccessibilityNodeInfo): Boolean {
         if (TIKTOK_PACKAGES.contains(packageName)) return true
         
+        val metrics = resources.displayMetrics
+        val screenWidth = metrics.widthPixels
+
+        // Specific detection for YouTube Shorts (Reels) vs normal videos
+        if (packageName == YOUTUBE_PACKAGE || packageName.contains("youtube")) {
+            val reelView = nodeInfo.findAccessibilityNodeInfosByViewId("com.google.android.youtube:id/reel_recycler")
+            val reelVideo = nodeInfo.findAccessibilityNodeInfosByViewId("com.google.android.youtube:id/reels_video_player_view")
+            
+            val isShorts = reelView.isNotEmpty() || reelVideo.isNotEmpty()
+            
+            // Check if we should allow inbox (for Instagram specifically, but good to have check here)
+            if (isShorts) return true
+        }
+
+        // Instagram Inbox Check (If enabled, don't block if in Direct)
+        if (packageName == INSTAGRAM_PACKAGE && sharedPrefs.getBoolean("allow_ig_inbox_reels", false)) {
+            val directHeader = nodeInfo.findAccessibilityNodeInfosByViewId("com.instagram.android:id/action_bar_container")
+            if (directHeader.isNotEmpty()) return false 
+        }
+
         REELS_VIEW_IDS.forEach { viewId ->
             val nodes = nodeInfo.findAccessibilityNodeInfosByViewId(viewId)
-            if (nodes.isNotEmpty()) {
-                val reelNode = nodes[0]
-                val rect = Rect()
-                reelNode.getBoundsInScreen(rect)
-                if (rect.width() > 0 && rect.height() > 0) return true
+            for (node in nodes) {
+                if (isViewOpened(node, screenWidth)) return true
             }
         }
         
-        // Fallback for YouTube Shorts if ViewID fails
-        if (packageName == YOUTUBE_PACKAGE) {
+        // Fallback for text check and generic content description checking
+        if (packageName == YOUTUBE_PACKAGE || packageName.contains("youtube")) {
             val shortsNodes = nodeInfo.findAccessibilityNodeInfosByText("Shorts")
             if (shortsNodes.any { it.isVisibleToUser }) return true
+            if (nodeInfo.contentDescription?.toString()?.contains("Shorts", ignoreCase = true) == true) return true
         }
 
         return false
+    }
+
+    private fun isViewOpened(node: AccessibilityNodeInfo, screenWidth: Int): Boolean {
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        val isOffScreenLeft = rect.right <= 0
+        val isOffScreenRight = rect.left >= screenWidth
+        return !isOffScreenLeft && !isOffScreenRight && rect.width() > 0 && rect.height() > 0
     }
 
     private fun handleOverlayVisibility(packageName: String, nodeInfo: AccessibilityNodeInfo) {
@@ -270,13 +416,24 @@ class MyBlockerService : AccessibilityService() {
     }
 
     private fun isViewingComments(packageName: String, nodeInfo: AccessibilityNodeInfo): Boolean {
-        val commentIds = listOf("com.instagram.android:id/layout_comment_thread_root", "com.google.android.youtube:id/comments_entry_point_container")
+        // Exclude our own app and non-entertainment apps to prevent accidental blocks
+        if (packageName == this.packageName || !REELS_VIEW_IDS.any { packageName.contains(it.substringBefore(":")) }) {
+            return false
+        }
+
+        val commentIds = listOf(
+            "com.instagram.android:id/layout_comment_thread_root",
+            "com.google.android.youtube:id/comments_entry_point_container"
+        )
         commentIds.forEach { id ->
             if (nodeInfo.findAccessibilityNodeInfosByViewId(id).isNotEmpty()) return true
         }
         
         val keywords = listOf("Comments", "Add a comment", "View all comments", "Reply")
-        return keywords.any { k -> nodeInfo.findAccessibilityNodeInfosByText(k).any { it.isVisibleToUser } }
+        return keywords.any { k -> 
+            val nodes = nodeInfo.findAccessibilityNodeInfosByText(k)
+            nodes.any { it.isVisibleToUser && it.packageName != this.packageName }
+        }
     }
 
     private fun containsExplicitContent(nodeInfo: AccessibilityNodeInfo): Boolean {
@@ -341,9 +498,15 @@ class MyBlockerService : AccessibilityService() {
         sharedPrefs.edit().putInt(prefKey, currentCount + 1).apply()
     }
 
-    private fun blockAction(reason: String) {
-        performGlobalAction(GLOBAL_ACTION_BACK)
-        Toast.makeText(this, reason, Toast.LENGTH_SHORT).show()
+    private fun blockAction(message: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastBlockTime < 2000) return
+        lastBlockTime = now
+        
+        handler.post {
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+            performGlobalAction(GLOBAL_ACTION_BACK)
+        }
     }
 
     private fun isLimitReached(packageName: String): Boolean {
@@ -388,14 +551,6 @@ class MyBlockerService : AccessibilityService() {
         return System.currentTimeMillis() < unlockUntil
     }
 
-    private fun showUnlockTaskScreen(packageName: String) {
-        val intent = Intent(this, UnlockTaskActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            putExtra("blocked_package", packageName)
-        }
-        startActivity(intent)
-    }
-
     private fun redirectToEducationalSite() {
         val url = REDIRECT_URLS.random()
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
@@ -407,19 +562,71 @@ class MyBlockerService : AccessibilityService() {
         } catch (e: Exception) {}
     }
 
-    private fun showWarningScreen(packageName: String, message: String) {
-        val intent = Intent(this, WarningActivity::class.java).apply {
+    private fun showUnlockTaskScreen(packageName: String) {
+        val intent = Intent(this, UnlockTaskActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             putExtra("blocked_package", packageName)
-            putExtra("warning_message", message)
         }
         startActivity(intent)
     }
 
+    private fun shouldBlockReelsNow(packageName: String): Boolean {
+        if (isCheatHourActive()) return false
+        
+        // 1. Check for temporary unlock
+        if (isTemporarilyUnlocked(packageName)) return false
+
+        // 2. Timed Blocking (e.g., block during night hours 11 PM - 7 AM if enabled)
+        if (sharedPrefs.getBoolean("reels_timed_block", false)) {
+            val calendar = Calendar.getInstance()
+            val hour = calendar.get(Calendar.HOUR_OF_DAY)
+            if (hour >= 23 || hour < 7) return true
+        }
+
+        // 3. Count Based Blocking (Daily scroll limit)
+        val dailyLimit = sharedPrefs.getInt("reels_daily_limit", 0)
+        if (dailyLimit > 0) {
+            val reels = sharedPrefs.getInt("reels_scroll_count", 0)
+            val shorts = sharedPrefs.getInt("shorts_scroll_count", 0)
+            val tiktok = sharedPrefs.getInt("tiktok_scroll_count", 0)
+            if ((reels + shorts + tiktok) >= dailyLimit) return true
+        }
+
+        // Default to block if strict mode is on and no specific limit was reached?
+        // Actually, if "Block Reels" is ON, we might want to block always unless a feature is configured.
+        // For now, let's assume "Strict Block" = ALWAYS BLOCK if no other condition.
+        return true 
+    }
+
+    private fun isReelButtonClick(nodeInfo: AccessibilityNodeInfo): Boolean {
+        val reelIds = listOf(
+            "com.instagram.android:id/clips_tab", 
+            "com.google.android.youtube:id/shorts_tab",
+            "com.instagram.android:id/reels_tab"
+        )
+        reelIds.forEach { id ->
+            if (nodeInfo.findAccessibilityNodeInfosByViewId(id).isNotEmpty()) return true
+        }
+        val reelTexts = listOf("Reels", "Shorts")
+        return reelTexts.any { t -> nodeInfo.findAccessibilityNodeInfosByText(t).any { it.isVisibleToUser } }
+    }
+
+    private fun isCommentButtonClick(nodeInfo: AccessibilityNodeInfo): Boolean {
+        val commentIds = listOf(
+            "com.instagram.android:id/comment_button",
+            "com.google.android.youtube:id/comments_entry_point_container"
+        )
+        commentIds.forEach { id ->
+            if (nodeInfo.findAccessibilityNodeInfosByViewId(id).isNotEmpty()) return true
+        }
+        return false
+    }
+
     // ===== GRAYSCALE OVERLAY =====
     private fun handleGrayscaleOverlay(packageName: String) {
+        val grayscaleActive = sharedPrefs.getBoolean("grayscale_enabled_global", true)
         val grayscaleApps = sharedPrefs.getStringSet("grayscale_apps", emptySet()) ?: emptySet()
-        if (grayscaleApps.contains(packageName)) {
+        if (grayscaleActive && grayscaleApps.contains(packageName)) {
             showGrayscaleOverlay()
         } else {
             removeGrayscaleOverlay()
@@ -446,8 +653,9 @@ class MyBlockerService : AccessibilityService() {
                 setLayerType(View.LAYER_TYPE_HARDWARE, android.graphics.Paint().apply {
                     colorFilter = ColorMatrixColorFilter(colorMatrix)
                 })
-                alpha = 0.85f
-                setBackgroundColor(0x01000000) // Nearly transparent but active
+                // Use a slightly more visible alpha and a tint background to make it look grayscale/boring
+                alpha = 0.99f
+                setBackgroundColor(0x80555555.toInt()) // Semi-transparent grey
             }
 
             try {
@@ -468,7 +676,9 @@ class MyBlockerService : AccessibilityService() {
         val showTimer = sharedPrefs.getBoolean("show_time_elapsed", false)
         if (showTimer && packageName != this.packageName) {
             if (currentPackage != packageName) {
+                // If the app just changed, reset the currentPackage tracking AFTER setting the time
                 appOpenTime = System.currentTimeMillis()
+                currentPackage = packageName // This needs to be carefully synced
             }
             showTimeElapsedOverlay()
         } else {
@@ -541,6 +751,51 @@ class MyBlockerService : AccessibilityService() {
         }
     }
 
+    private fun showUnlockTimerOverlay(packageName: String) {
+        if (unlockTimerView == null) {
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT
+            )
+            params.gravity = Gravity.TOP or Gravity.END
+            params.x = 40
+            params.y = 300 // Position it below the scroll counter
+
+            unlockTimerView = LayoutInflater.from(this).inflate(R.layout.layout_unlock_timer, null)
+            try {
+                windowManager?.addView(unlockTimerView, params)
+                handler.post(updateUnlockTimerTask)
+            } catch (e: Exception) {}
+        }
+    }
+
+    private fun removeUnlockTimerOverlay() {
+        unlockTimerView?.let {
+            try { windowManager?.removeView(it) } catch (e: Exception) {}
+            unlockTimerView = null
+            handler.removeCallbacks(updateUnlockTimerTask)
+        }
+    }
+
+    private fun updateUnlockTimerOverlay() {
+        val pkg = currentPackage ?: return
+        val unlockUntil = sharedPrefs.getLong("unlock_$pkg", 0L)
+        val remainingMs = unlockUntil - System.currentTimeMillis()
+
+        if (remainingMs <= 0) {
+            removeUnlockTimerOverlay()
+            return
+        }
+
+        val totalSecs = remainingMs / 1000
+        val mins = totalSecs / 60
+        val secs = totalSecs % 60
+        unlockTimerView?.findViewById<TextView>(R.id.tvUnlockTimer)?.text = String.format("%02d:%02d", mins, secs)
+    }
+
     private fun removeBlurOverlay() {
         blurOverlayView?.let {
             try { windowManager?.removeView(it) } catch (e: Exception) {}
@@ -548,11 +803,45 @@ class MyBlockerService : AccessibilityService() {
         }
     }
 
+    private fun showWarningScreen(packageName: String, defaultMsg: String) {
+        val intent = Intent(this, WarningActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            putExtra("blocked_package", packageName)
+            val customMsg = sharedPrefs.getString("warning_message_reels", defaultMsg)
+            putExtra("warning_message", customMsg)
+        }
+        startActivity(intent)
+    }
+
+    private fun isCheatHourActive(): Boolean {
+        if (!sharedPrefs.getBoolean("cheat_hours_enabled", false)) return false
+        val range = sharedPrefs.getString("cheat_hours_range", "21:00-22:00") ?: return false
+        try {
+            val parts = range.split("-")
+            val start = parts[0].split(":")
+            val end = parts[1].split(":")
+            
+            val calendar = Calendar.getInstance()
+            val nowMin = calendar.get(Calendar.HOUR_OF_DAY) * 60 + calendar.get(Calendar.MINUTE)
+            
+            val startMin = start[0].toInt() * 60 + start[1].toInt()
+            val endMin = end[0].toInt() * 60 + end[1].toInt()
+            
+            return if (startMin < endMin) {
+                nowMin in startMin..endMin
+            } else {
+                // Over midnight range
+                nowMin >= startMin || nowMin <= endMin
+            }
+        } catch (e: Exception) { return false }
+    }
+
     private fun removeAllOverlays() {
         removeFloatingOverlay()
         removeBlurOverlay()
         removeGrayscaleOverlay()
         removeTimeElapsedOverlay()
+        removeUnlockTimerOverlay()
     }
 
     override fun onInterrupt() { removeAllOverlays() }

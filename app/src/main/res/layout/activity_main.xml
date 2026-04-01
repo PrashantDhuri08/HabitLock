@@ -54,49 +54,57 @@
                 android:textColor="@color/accent_green" />
         </LinearLayout>
 
-        <!-- Main Usage Circle -->
-        <FrameLayout
-            android:id="@+id/flUsageCircle"
-            android:layout_width="220dp"
-            android:layout_height="220dp"
+        <!-- Pie Chart Section (Primary Usage Display) -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cvPieChart"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="16dp"
             android:layout_marginTop="32dp"
+            app:cardBackgroundColor="@color/card_dark"
+            app:cardCornerRadius="20dp"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/tvTitle">
 
-            <ProgressBar
-                android:id="@+id/pbDailyUsage"
-                style="?android:attr/progressBarStyleHorizontal"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:max="480"
-                android:progress="0"
-                android:progressDrawable="@drawable/circular_progress_bar" />
-
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_gravity="center"
-                android:gravity="center"
-                android:orientation="vertical">
+                android:orientation="vertical"
+                android:padding="16dp">
 
-                <TextView
-                    android:id="@+id/tvTotalUsage"
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:fontFamily="sans-serif-bold"
-                    android:textColor="@color/text_primary"
-                    android:textSize="36sp"
-                    tools:text="4h 23m" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Daily Usage"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="14sp" />
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Usage Breakdown"
+                        android:textColor="@color/accent_green"
+                        android:fontFamily="sans-serif-bold"
+                        android:textSize="18sp"/>
+
+                    <TextView
+                        android:id="@+id/tvTotalUsage"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-medium"
+                        android:textColor="@color/text_primary"
+                        android:textSize="20sp"
+                        tools:text="4h 23m" />
+                </LinearLayout>
+
+                <com.example.hlock.PieChartView
+                    android:id="@+id/pieChart"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
             </LinearLayout>
-        </FrameLayout>
+        </com.google.android.material.card.MaterialCardView>
 
         <!-- Features -->
         <com.google.android.material.card.MaterialCardView
@@ -109,7 +117,7 @@
             app:cardCornerRadius="20dp"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/flUsageCircle">
+            app:layout_constraintTop_toBottomOf="@+id/cvPieChart">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -132,6 +140,16 @@
                     android:layout_height="wrap_content"
                     android:text="Strict Reels/Shorts Block"
                     android:textColor="@color/text_primary" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnManageWarningScreen"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Configure Warning Screen"
+                    android:textColor="@color/accent_green"
+                    android:textSize="12sp"
+                    android:textAllCaps="false"/>
 
                 <com.google.android.material.switchmaterial.SwitchMaterial
                     android:id="@+id/swBlockComments"
@@ -182,8 +200,25 @@
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:background="#1AFFFFFF"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="8dp"
                     android:layout_marginBottom="12dp"/>
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swCheatHours"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Enable Cheat Hours"
+                    android:textColor="@color/text_primary" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnSetCheatHours"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Manage Cheat Hours"
+                    android:textColor="@color/accent_green"
+                    android:textSize="12sp"
+                    android:textAllCaps="false"/>
 
                 <com.google.android.material.switchmaterial.SwitchMaterial
                     android:id="@+id/swGrayscale"
@@ -212,40 +247,6 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- Pie Chart Section -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cvPieChart"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="16dp"
-            android:layout_marginTop="16dp"
-            app:cardBackgroundColor="@color/card_dark"
-            app:cardCornerRadius="20dp"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/cvFeatures">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Usage Breakdown"
-                    android:textColor="@color/accent_green"
-                    android:fontFamily="sans-serif-bold"
-                    android:textSize="18sp"
-                    android:layout_marginBottom="8dp"/>
-
-                <com.example.hlock.PieChartView
-                    android:id="@+id/pieChart"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content" />
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
 
         <!-- Stats Preview -->
         <com.google.android.material.card.MaterialCardView
@@ -258,7 +259,7 @@
             app:cardCornerRadius="20dp"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@+id/cvPieChart">
+            app:layout_constraintTop_toBottomOf="@+id/cvFeatures">
 
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:layout_width="match_parent"
