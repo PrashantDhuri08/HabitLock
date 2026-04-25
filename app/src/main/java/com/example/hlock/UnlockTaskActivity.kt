@@ -109,7 +109,7 @@ class UnlockTaskActivity : AppCompatActivity(), SensorEventListener {
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         stepSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
 
-        findViewById<com.google.android.material.button.MaterialButton>(R.id.btnCancelTask).setOnClickListener {
+        findViewById<MaterialButton>(R.id.btnCancelTask).setOnClickListener {
             layoutTaskExecution.visibility = View.GONE
             layoutTaskSelection.visibility = View.VISIBLE
             sensorManager?.unregisterListener(this)

@@ -82,12 +82,26 @@ class MyBlockerService : AccessibilityService() {
     private val totalSwipesSeen = mutableMapOf<String, Int>()
     
     // Redirect URLs for when blocked keywords are found
+//    private val REDIRECT_URLS = listOf(
+//        "https://www.khanacademy.org",
+//        "https://en.wikipedia.org/wiki/Special:Random",
+//        "https://www.duolingo.com",
+//        "https://www.coursera.org",
+//        "https://www.ted.com"
+//    )
+
+
     private val REDIRECT_URLS = listOf(
-        "https://www.khanacademy.org",
-        "https://en.wikipedia.org/wiki/Special:Random",
-        "https://www.duolingo.com",
-        "https://www.coursera.org",
-        "https://www.ted.com"
+        "https://news.ycombinator.com",       // Hacker News
+        "https://stackoverflow.com",          // Stack Overflow
+        "https://dev.to",                     // DEV Community
+        "https://hashnode.com",               // Hashnode
+        "https://www.freecodecamp.org",       // freeCodeCamp
+        "https://leetcode.com",               // LeetCode
+        "https://www.hackerrank.com",         // HackerRank
+        "https://www.producthunt.com",        // Product Hunt
+        "https://techcrunch.com",             // TechCrunch
+        "https://www.wired.com"               // Wired
     )
 
     // Known explicit/adult domains and URL patterns

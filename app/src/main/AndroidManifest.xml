@@ -15,10 +15,10 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@drawable/croplo"
-        android:roundIcon="@drawable/croplo"
+        android:icon="@mipmap/hlock_logo"
+        android:roundIcon="@mipmap/hlock_logo_round"
         android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
-        android:label="HLock">
+        android:label="HabitLock">
 
         <activity android:name=".MainActivity"
             android:exported="true">
