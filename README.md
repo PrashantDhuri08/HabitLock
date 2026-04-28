@@ -14,6 +14,20 @@ You can download the latest version of HabitLock from the **[GitHub Releases](ht
 
 ---
 
+## 🛠️ Setup & Permissions
+
+To ensure HabitLock works correctly, follow these steps after installation:
+
+1. **Open HabitLock** on your Android device.
+2. Click the **Setup** button on the dashboard/home screen.
+3. **IMPORTANT**: Enable **Accessibility Permission** first. After clicking **Setup**, navigate to **Installed Apps**, then click on **HabitLock** and turn the switch **ON**. This is the core permission that allows HabitLock to monitor usage and block distracting apps.
+4. Follow the prompts to enable other required permissions:
+   - **System Overlay**: To show warning screens and blocking overlays.
+   - **Usage Stats**: To track time spent on different apps.
+   - **Battery Optimization**: (Recommended) Disable optimization for HabitLock to ensure it runs reliably in the background.
+
+---
+
 ## 🔐 Privacy First
 
 - **100% On-Device Processing**: All monitoring and analysis happen locally.
@@ -136,6 +150,18 @@ HabitLock introduces the concept of **"Productive Friction"** — forcing real-w
 4. **Install on device:**
    ```bash
    ./gradlew installDebug
+   ```
+
+---
+
+## 🖥️ Backend Setup
+
+The HabitLock backend is managed using **uv** for fast and reliable dependency management.
+
+1. **Ensure you have [uv](https://github.com/astral-sh/uv) installed.**
+2. **Run the backend:**
+   ```bash
+   uv run main.py
    ```
 
 ---
